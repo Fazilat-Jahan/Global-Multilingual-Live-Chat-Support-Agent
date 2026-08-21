@@ -111,7 +111,9 @@ async def handle_message(
     runs one guardrail-wrapped agent turn, and persists both sides of it.
     """
     session = await load_or_create(session_id, customer_id)
-    support_context = SupportContext(session_id=session_id, customer_id=customer_id)
+    support_context = SupportContext(
+        session_id=session_id, customer_id=customer_id, conversation_id=str(session.conversation.id)
+    )
 
     outcome = await run_turn(
         session.resume_agent, user_message, support_context, history=session.input_history
@@ -130,7 +132,9 @@ async def stream_message(
     WebSocket handler must not forward it to the client.
     """
     session = await load_or_create(session_id, customer_id)
-    support_context = SupportContext(session_id=session_id, customer_id=customer_id)
+    support_context = SupportContext(
+        session_id=session_id, customer_id=customer_id, conversation_id=str(session.conversation.id)
+    )
 
     outcome: TurnOutcome | None = None
     async for event in stream_turn(

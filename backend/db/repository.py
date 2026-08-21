@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.db.models import Conversation, ConversationStatus, Message
+from backend.db.models import Conversation, ConversationStatus, Message, Ticket, TicketStatus
 
 
 async def get_conversation_by_id(db: AsyncSession, conversation_id: uuid.UUID) -> Conversation | None:
@@ -74,3 +74,40 @@ async def mark_escalated(db: AsyncSession, conversation_id: uuid.UUID) -> None:
     conversation.status = ConversationStatus.ESCALATED
     conversation.escalated_at = datetime.now(timezone.utc)
     await db.commit()
+
+
+async def create_ticket(
+    db: AsyncSession,
+    *,
+    ticket_id: str,
+    conversation_id: uuid.UUID | None,
+    reason: str,
+    summary: str,
+    priority: str,
+    customer_reference: str | None = None,
+) -> Ticket:
+    ticket = Ticket(
+        ticket_id=ticket_id,
+        conversation_id=conversation_id,
+        reason=reason,
+        summary=summary,
+        priority=priority,
+        customer_reference=customer_reference,
+    )
+    db.add(ticket)
+    await db.commit()
+    await db.refresh(ticket)
+    return ticket
+
+
+async def get_ticket_by_ticket_id(db: AsyncSession, ticket_id: str) -> Ticket | None:
+    result = await db.execute(select(Ticket).where(Ticket.ticket_id == ticket_id))
+    return result.scalar_one_or_none()
+
+
+async def list_tickets(db: AsyncSession, status: TicketStatus | None = None) -> list[Ticket]:
+    query = select(Ticket).order_by(Ticket.created_at.desc())
+    if status is not None:
+        query = query.where(Ticket.status == status)
+    result = await db.execute(query)
+    return list(result.scalars().all())

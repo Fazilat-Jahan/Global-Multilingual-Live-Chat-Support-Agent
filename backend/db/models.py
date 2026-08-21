@@ -22,6 +22,14 @@ class ConversationStatus(str, enum.Enum):
     CLOSED = "CLOSED"
 
 
+class TicketStatus(str, enum.Enum):
+    OPEN = "OPEN"
+    ASSIGNED = "ASSIGNED"
+    IN_PROGRESS = "IN_PROGRESS"
+    RESOLVED = "RESOLVED"
+    CLOSED = "CLOSED"
+
+
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -63,3 +71,22 @@ class Message(Base):
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+
+
+class Ticket(Base):
+    __tablename__ = "tickets"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    ticket_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("conversations.id"), nullable=True, index=True
+    )
+    priority: Mapped[str] = mapped_column(String(16), default="normal")
+    reason: Mapped[str] = mapped_column(String(256))
+    summary: Mapped[str] = mapped_column(Text)
+    customer_reference: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[TicketStatus] = mapped_column(
+        SAEnum(TicketStatus, name="ticket_status"), default=TicketStatus.OPEN
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    assigned_to: Mapped[str | None] = mapped_column(String(64), nullable=True)
