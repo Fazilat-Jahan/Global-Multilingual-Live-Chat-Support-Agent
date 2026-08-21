@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plain HTML Embed Test</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f5f9;
+        color: #1e293b;
+      }
+      h1 {
+        font-size: 1.5rem;
+      }
+      p {
+        max-width: 40rem;
+        line-height: 1.5;
+      }
+
+      /* --- Embeddable widget: a plain host page owns the launcher button
+         and toggles a fixed-position iframe. This is the standard pattern
+         for third-party chat widgets (Intercom/Drift/Crisp-style). --- */
+      #support-widget-launcher {
+        position: fixed;
+        bottom: 24px;
+        right: 24px;
+        width: 56px;
+        height: 56px;
+        border-radius: 9999px;
+        background: #3b6df0;
+        color: white;
+        border: none;
+        font-size: 24px;
+        cursor: pointer;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        z-index: 2147483000;
+      }
+
+      #support-widget-frame {
+        position: fixed;
+        bottom: 92px;
+        right: 24px;
+        width: 380px;
+        max-width: 90vw;
+        height: 600px;
+        max-height: 75vh;
+        border: none;
+        border-radius: 16px;
+        box-shadow: 0 20px 50px rgba(0, 0, 0, 0.25);
+        display: none;
+        z-index: 2147483000;
+      }
+
+      #support-widget-frame.open {
+        display: block;
+      }
+
+      @media (max-width: 480px) {
+        #support-widget-frame {
+          width: 100vw;
+          height: 100vh;
+          max-height: 100vh;
+          bottom: 0;
+          right: 0;
+          border-radius: 0;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Acme Co. — Plain HTML Page</h1>
+    <p>
+      This page has nothing to do with Next.js — it's a static HTML file that embeds the support
+      chat widget the same way a real client site would: a floating launcher button plus an
+      <code>&lt;iframe&gt;</code> pointing at the widget's dedicated route.
+    </p>
+
+    <button id="support-widget-launcher" aria-label="Open support chat">💬</button>
+    <iframe id="support-widget-frame" title="Support chat" src="http://localhost:3000/widget"></iframe>
+
+    <script>
+      const launcher = document.getElementById("support-widget-launcher");
+      const frame = document.getElementById("support-widget-frame");
+      launcher.addEventListener("click", () => {
+        frame.classList.toggle("open");
+        launcher.textContent = frame.classList.contains("open") ? "✕" : "💬";
+      });
+    </script>
+  </body>
+</html>
