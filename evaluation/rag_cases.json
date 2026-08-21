@@ -1,0 +1,69 @@
+[
+  {
+    "id": "faq_returns_en",
+    "query": "What is your return window?",
+    "language": "en",
+    "expect_abstain": false,
+    "expected_keywords": ["30 days"]
+  },
+  {
+    "id": "faq_shipping_ur",
+    "query": "بین الاقوامی شپنگ میں کتنے دن لگتے ہیں؟",
+    "language": "ur",
+    "expect_abstain": false,
+    "expected_keywords": ["international shipping"]
+  },
+  {
+    "id": "faq_payment_roman_ur",
+    "query": "Kya aap installment mein payment le sakte hain?",
+    "language": "ur-roman",
+    "expect_abstain": false,
+    "expected_keywords": ["installment"]
+  },
+  {
+    "id": "policy_refund_es",
+    "query": "¿Cuánto tiempo tarda en procesarse el reembolso?",
+    "language": "es",
+    "expect_abstain": false,
+    "expected_keywords": ["3 to 5 business days"]
+  },
+  {
+    "id": "product_smartwatch_ar",
+    "query": "ما هي مدة بطارية الساعة الذكية؟",
+    "language": "ar",
+    "expect_abstain": false,
+    "expected_keywords": ["battery life"]
+  },
+  {
+    "id": "product_headphones_en",
+    "query": "How many hours of battery life do the wireless headphones have?",
+    "language": "en",
+    "expect_abstain": false,
+    "expected_keywords": ["30 hours"]
+  },
+  {
+    "id": "policy_privacy_en",
+    "query": "How do I request deletion of my personal data?",
+    "language": "en",
+    "expect_abstain": false,
+    "expected_keywords": ["deletion"]
+  },
+  {
+    "id": "out_of_scope_weather",
+    "query": "What's the weather like today?",
+    "language": "en",
+    "expect_abstain": true
+  },
+  {
+    "id": "out_of_scope_capital",
+    "query": "What is the capital of France?",
+    "language": "en",
+    "expect_abstain": true
+  },
+  {
+    "id": "out_of_scope_joke",
+    "query": "Tell me a joke about cats.",
+    "language": "en",
+    "expect_abstain": true
+  }
+]

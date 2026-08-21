@@ -55,7 +55,7 @@ async def continue_turn(previous_result: RunResult, message: str, context: Suppo
 
 
 async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> TurnOutcome:
-    context.latest_user_message = message = input if isinstance(input, str) else _last_user_text(input)
+    context.latest_user_message = input if isinstance(input, str) else _last_user_text(input)
 
     try:
         result = await Runner.run(agent, input, context=context)

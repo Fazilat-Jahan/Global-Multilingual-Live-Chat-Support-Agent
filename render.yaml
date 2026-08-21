@@ -1,0 +1,50 @@
+# Render Blueprint for the backend API. Import this repo at
+# https://dashboard.render.com/blueprints and Render will create the web
+# service below from it. Env vars marked `sync: false` must be filled in by
+# hand in the Render dashboard (never committed) — see .env.example for the
+# full list and README.md's Deployment section for where each value comes
+# from (Neon/Upstash/Qdrant Cloud/Gemini/SMTP/Slack).
+services:
+  - type: web
+    name: support-agent-backend
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL_NAME
+        value: gemini-flash-latest
+      - key: GEMINI_EMBEDDING_MODEL
+        value: gemini-embedding-001
+      - key: APP_ENV
+        value: production
+      - key: APP_HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: INFO
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SLACK_WEBHOOK_URL
+        sync: false
+      - key: RATE_LIMIT_PER_SESSION_PER_MINUTE
+        value: "20"
+      - key: RATE_LIMIT_PER_IP_PER_MINUTE
+        value: "60"
+      - key: TENANT_ID
+        value: default

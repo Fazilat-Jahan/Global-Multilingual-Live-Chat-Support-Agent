@@ -12,9 +12,8 @@ import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-logger = logging.getLogger(__name__)
-
-from backend.guardrails.security import SAFE_ERROR_MESSAGE
+from backend.guardrails.security import RATE_LIMIT_MESSAGE, SAFE_ERROR_MESSAGE
+from backend.services import rate_limit_service
 from backend.services.conversation_service import stream_message
 from backend.websocket.connection_manager import heartbeat_loop, manager
 from backend.websocket.events import (
@@ -25,6 +24,8 @@ from backend.websocket.events import (
     USER_MESSAGE,
     build_event,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -65,6 +66,13 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None) ->
 
             if not content:
                 await websocket.send_json(build_event(ERROR, message="Empty message."))
+                continue
+
+            client_ip = websocket.client.host if websocket.client else None
+            allowed, reason = await rate_limit_service.check_session_and_ip(session_id, client_ip)
+            if not allowed:
+                logger.warning("Rate limit exceeded (%s) for session %s", reason, session_id)
+                await websocket.send_json(build_event(ERROR, message=RATE_LIMIT_MESSAGE))
                 continue
 
             await websocket.send_json(build_event(MESSAGE_RECEIVED, message_id=message_id))

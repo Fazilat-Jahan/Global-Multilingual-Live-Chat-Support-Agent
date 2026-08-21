@@ -26,7 +26,29 @@ dev = [
     "pytest>=8.3.0",
     "pytest-asyncio>=0.24.0",
     "websockets>=13.0",
+    "ruff>=0.7.0",
 ]
 
 [tool.setuptools.packages.find]
 include = ["backend*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+# backend.db.connection.engine is a module-level singleton whose asyncpg
+# connection pool is bound to whichever event loop created it — pytest-asyncio's
+# default per-test event loop would make later tests reuse pooled connections
+# from a closed loop ("Future attached to a different loop"). Sharing one
+# session-scoped loop across the whole run avoids that.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+testpaths = ["backend/tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+# Intentional str+Enum multiple inheritance (ConversationStatus, TicketStatus)
+# for direct JSON/DB serialization compatibility — not a stylistic accident.
+ignore = ["UP042"]

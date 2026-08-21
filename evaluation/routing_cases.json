@@ -1,0 +1,32 @@
+[
+  {
+    "id": "faq_en",
+    "message": "What is your return policy?",
+    "expected_agent": "RAG Agent"
+  },
+  {
+    "id": "order_en",
+    "message": "Can you check the status of order 12345?",
+    "expected_agent": "Action Agent"
+  },
+  {
+    "id": "human_en",
+    "message": "I want to talk to a human, please.",
+    "expected_agent": "Escalation Agent"
+  },
+  {
+    "id": "faq_ur",
+    "message": "آپ کی واپسی کی پالیسی کیا ہے؟",
+    "expected_agent": "RAG Agent"
+  },
+  {
+    "id": "order_es",
+    "message": "¿Puedes verificar el estado del pedido 67890?",
+    "expected_agent": "Action Agent"
+  },
+  {
+    "id": "human_ar",
+    "message": "أريد التحدث مع إنسان من فضلك",
+    "expected_agent": "Escalation Agent"
+  }
+]

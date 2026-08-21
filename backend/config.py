@@ -39,6 +39,16 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     slack_webhook_url: str = ""
 
+    # Rate limiting (Redis-backed fixed window; Phase 8)
+    rate_limit_per_session_per_minute: int = 20
+    rate_limit_per_ip_per_minute: int = 60
+
+    # Light tenant isolation (Phase 8) — a single-value discriminator tagged
+    # onto Qdrant points and DB rows, so a shared DB/Qdrant instance later
+    # serving multiple clients can't cross-contaminate their data. Not a
+    # full tenant-management system (out of scope for this MVP).
+    tenant_id: str = "default"
+
 
 @lru_cache
 def get_settings() -> Settings:

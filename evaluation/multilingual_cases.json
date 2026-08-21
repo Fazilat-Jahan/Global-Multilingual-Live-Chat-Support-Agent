@@ -1,0 +1,32 @@
+[
+  {
+    "id": "en",
+    "message": "What is your return policy?",
+    "language": "en",
+    "script": "latin"
+  },
+  {
+    "id": "ur",
+    "message": "آپ کی واپسی کی پالیسی کیا ہے؟",
+    "language": "ur",
+    "script": "arabic"
+  },
+  {
+    "id": "ur_roman",
+    "message": "Aapki return policy kya hai?",
+    "language": "ur-roman",
+    "script": "latin"
+  },
+  {
+    "id": "ar",
+    "message": "ما هي سياسة الإرجاع الخاصة بكم؟",
+    "language": "ar",
+    "script": "arabic"
+  },
+  {
+    "id": "es",
+    "message": "¿Cuál es su política de devoluciones?",
+    "language": "es",
+    "script": "latin"
+  }
+]

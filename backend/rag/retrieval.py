@@ -1,17 +1,39 @@
+import asyncio
+import logging
 from dataclasses import dataclass
 
 from qdrant_client import AsyncQdrantClient
+from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from backend.config import get_settings
 from backend.rag.embeddings import embed_query
 from backend.rag.ingestion import COLLECTION_NAME
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 
 # Below this similarity score, a match is not considered a confident enough
 # grounding for an answer — used as the abstention signal by the RAG agent.
-DEFAULT_SCORE_THRESHOLD = 0.5
+# Raised from 0.5 after Phase 9's RAG evaluation (evaluation/rag_cases.json)
+# found a genuinely out-of-scope query ("What's the weather like today?")
+# scoring 0.52 against an unrelated product doc — 0.6 sits with a clear
+# margin below every grounded case's score (0.675+) and above that false
+# positive.
+DEFAULT_SCORE_THRESHOLD = 0.6
 DEFAULT_TOP_K = 5
+
+# Phase 8 hardening: a slow/unreachable Qdrant must fail fast with a safe,
+# in-conversation customer message (backend.agents.rag) rather than hanging
+# the turn or leaking a raw exception up to the WebSocket handler's generic
+# fallback.
+QDRANT_TIMEOUT_SECONDS = 5.0
+QDRANT_MAX_ATTEMPTS = 2
+
+
+class KnowledgeBaseUnavailableError(Exception):
+    """Raised when Qdrant can't be reached/timed out after retrying. Callers
+    must convert this into the spec's safe customer-facing message — never
+    let it surface as a raw exception/traceback."""
 
 
 @dataclass
@@ -40,29 +62,53 @@ async def search(
     an empty list if nothing clears score_threshold, which callers should
     treat as a low-confidence / abstention signal rather than fabricating an
     answer.
-    """
-    client = _get_client()
-    try:
-        if not await client.collection_exists(COLLECTION_NAME):
-            return []
 
-        query_vector = await embed_query(query)
-        results = await client.query_points(
-            collection_name=COLLECTION_NAME,
-            query=query_vector,
-            limit=top_k,
-            score_threshold=score_threshold,
-        )
-        return [
-            RetrievedChunk(
-                text=point.payload["text"],
-                title=point.payload["title"],
-                source=point.payload["source"],
-                category=point.payload["category"],
-                product=point.payload.get("product"),
-                score=point.score,
+    Raises KnowledgeBaseUnavailableError if Qdrant can't be reached/times out
+    after retrying — this is a distinct signal from "no results found" so
+    the RAG agent can tell the difference between abstention and an outage.
+    """
+    last_error: Exception | None = None
+
+    for attempt in range(1, QDRANT_MAX_ATTEMPTS + 1):
+        client = _get_client()
+        try:
+            return await asyncio.wait_for(
+                _search_once(client, query, top_k, score_threshold), timeout=QDRANT_TIMEOUT_SECONDS
             )
-            for point in results.points
-        ]
-    finally:
-        await client.close()
+        except Exception as exc:  # deliberately broad: any Qdrant/network failure is retried the same way
+            last_error = exc
+            logger.warning("Qdrant search attempt %d/%d failed: %s", attempt, QDRANT_MAX_ATTEMPTS, exc)
+        finally:
+            await client.close()
+
+    logger.error("Qdrant unreachable after %d attempts", QDRANT_MAX_ATTEMPTS, exc_info=last_error)
+    raise KnowledgeBaseUnavailableError("Qdrant unreachable") from last_error
+
+
+async def _search_once(
+    client: AsyncQdrantClient, query: str, top_k: int, score_threshold: float
+) -> list[RetrievedChunk]:
+    if not await client.collection_exists(COLLECTION_NAME):
+        return []
+
+    query_vector = await embed_query(query)
+    results = await client.query_points(
+        collection_name=COLLECTION_NAME,
+        query=query_vector,
+        limit=top_k,
+        score_threshold=score_threshold,
+        query_filter=Filter(
+            must=[FieldCondition(key="tenant_id", match=MatchValue(value=settings.tenant_id))]
+        ),
+    )
+    return [
+        RetrievedChunk(
+            text=point.payload["text"],
+            title=point.payload["title"],
+            source=point.payload["source"],
+            category=point.payload["category"],
+            product=point.payload.get("product"),
+            score=point.score,
+        )
+        for point in results.points
+    ]

@@ -26,13 +26,22 @@ SAFE_ERROR_MESSAGE = (
     "to speak with a human and we'll follow up with you directly."
 )
 
+RATE_LIMIT_MESSAGE = (
+    "You're sending messages a bit too quickly. Please wait a moment and try again."
+)
+
+KNOWLEDGE_BASE_UNAVAILABLE_MESSAGE = (
+    "I'm temporarily unable to access the support knowledge base. Please try again "
+    "in a moment, or I can connect you with a human support agent."
+)
+
 _PROMPT_INJECTION_PATTERNS = [
     r"ignore (all |any )?(previous|prior|above) instructions",
     r"disregard (all |any )?(previous|prior|above)",
     r"reveal (your |the )?(system|hidden) prompt",
     r"(show|print|output|repeat) (your |the )?(system prompt|instructions)",
     r"what (are|were) your (system )?instructions",
-    r"you are now (a|an|in) ",
+    r"you are now (a|an|in|dan)\b",
     r"forget (all |any )?(previous|prior) instructions",
     r"act as (if |a |an )?(dan|jailbreak|unrestricted)",
     r"pretend (you have no|there are no) (restrictions|rules|guidelines)",
@@ -94,6 +103,24 @@ def check_unsupported_request(text: str) -> bool:
 
 def check_leaked_internals(text: str) -> bool:
     return _matches_any(text, _LEAKAGE_PATTERNS)
+
+
+_EMAIL_PATTERN = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_PHONE_PATTERN = re.compile(r"(?<!\d)(\+?\d[\d\-\s]{7,}\d)(?!\d)")
+_CARD_PATTERN = re.compile(r"(?<!\d)(?:\d[ -]?){13,19}(?!\d)")
+
+
+def mask_pii(text: str) -> str:
+    """Redacts email/phone/payment-card-like substrings before text is ever
+    written to a log sink. Never applied to what's persisted in Postgres as
+    durable conversation history — only to diagnostic/log output, per the
+    privacy rule (don't blindly log full conversations; mask sensitive
+    fields in logs).
+    """
+    redacted = _CARD_PATTERN.sub("[redacted-card]", text)
+    redacted = _EMAIL_PATTERN.sub("[redacted-email]", redacted)
+    redacted = _PHONE_PATTERN.sub("[redacted-phone]", redacted)
+    return redacted
 
 
 def detect_language(text: str) -> str | None:

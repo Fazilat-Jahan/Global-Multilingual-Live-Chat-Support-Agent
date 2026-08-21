@@ -28,6 +28,9 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+_NOTIFY_MAX_ATTEMPTS = 2
+_NOTIFY_RETRY_DELAY_SECONDS = 1.5
+
 
 async def create_ticket(
     conversation_id: uuid.UUID | None,
@@ -71,12 +74,21 @@ async def send_email_notification(ticket_id: str, summary: str, priority: str, r
     if not (settings.smtp_host and settings.smtp_user and settings.smtp_password):
         logger.info("SMTP not configured — skipping email notification for ticket %s", ticket_id)
         return False
-    try:
-        await asyncio.to_thread(_send_email_sync, ticket_id, summary, priority, reason)
-        return True
-    except Exception:
-        logger.exception("Failed to send email notification for ticket %s", ticket_id)
-        return False
+
+    for attempt in range(1, _NOTIFY_MAX_ATTEMPTS + 1):
+        try:
+            await asyncio.to_thread(_send_email_sync, ticket_id, summary, priority, reason)
+            return True
+        except Exception:
+            logger.exception(
+                "Email notification attempt %d/%d failed for ticket %s",
+                attempt,
+                _NOTIFY_MAX_ATTEMPTS,
+                ticket_id,
+            )
+            if attempt < _NOTIFY_MAX_ATTEMPTS:
+                await asyncio.sleep(_NOTIFY_RETRY_DELAY_SECONDS)
+    return False
 
 
 async def send_slack_notification(ticket_id: str, summary: str, priority: str, reason: str) -> bool:
@@ -90,14 +102,23 @@ async def send_slack_notification(ticket_id: str, summary: str, priority: str, r
             f"*Reason:* {reason}\n*Summary:* {summary}"
         )
     }
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            response = await client.post(settings.slack_webhook_url, json=payload)
-            response.raise_for_status()
-        return True
-    except Exception:
-        logger.exception("Failed to send Slack notification for ticket %s", ticket_id)
-        return False
+
+    for attempt in range(1, _NOTIFY_MAX_ATTEMPTS + 1):
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(settings.slack_webhook_url, json=payload)
+                response.raise_for_status()
+            return True
+        except Exception:
+            logger.exception(
+                "Slack notification attempt %d/%d failed for ticket %s",
+                attempt,
+                _NOTIFY_MAX_ATTEMPTS,
+                ticket_id,
+            )
+            if attempt < _NOTIFY_MAX_ATTEMPTS:
+                await asyncio.sleep(_NOTIFY_RETRY_DELAY_SECONDS)
+    return False
 
 
 async def notify_human_team(ticket_id: str, summary: str) -> str:

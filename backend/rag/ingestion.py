@@ -8,12 +8,12 @@ import asyncio
 import hashlib
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
 from qdrant_client import AsyncQdrantClient
-from qdrant_client.models import Distance, PointStruct, VectorParams
+from qdrant_client.models import Distance, PayloadSchemaType, PointStruct, VectorParams
 
 from backend.config import get_settings
 from backend.rag.chunking import chunk_text, clean_text
@@ -73,11 +73,18 @@ def _chunk_point_id(document_id: str, chunk_index: int) -> str:
 
 
 async def _ensure_collection(client: AsyncQdrantClient) -> None:
-    if await client.collection_exists(COLLECTION_NAME):
-        return
-    await client.create_collection(
-        collection_name=COLLECTION_NAME,
-        vectors_config=VectorParams(size=EMBEDDING_DIMENSIONS, distance=Distance.COSINE),
+    if not await client.collection_exists(COLLECTION_NAME):
+        await client.create_collection(
+            collection_name=COLLECTION_NAME,
+            vectors_config=VectorParams(size=EMBEDDING_DIMENSIONS, distance=Distance.COSINE),
+        )
+
+    # Qdrant (in particular the managed/Cloud service) requires an explicit
+    # payload index to filter a query by a field — needed for the Phase 8
+    # tenant_id filter in backend.rag.retrieval.search(). Idempotent: safe
+    # to call even if the index already exists.
+    await client.create_payload_index(
+        collection_name=COLLECTION_NAME, field_name="tenant_id", field_schema=PayloadSchemaType.KEYWORD
     )
 
 
@@ -92,7 +99,7 @@ async def ingest() -> int:
     client = AsyncQdrantClient(url=settings.qdrant_url, api_key=settings.qdrant_api_key or None)
     await _ensure_collection(client)
 
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     total_chunks = 0
 
     for document in documents:
@@ -107,6 +114,7 @@ async def ingest() -> int:
                 id=_chunk_point_id(document.document_id, i),
                 vector=vector,
                 payload={
+                    "tenant_id": settings.tenant_id,
                     "document_id": document.document_id,
                     "source": document.source,
                     "title": document.title,
