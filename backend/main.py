@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.health import router as health_router
+from backend.api.tickets import router as tickets_router
 from backend.config import get_settings
 from backend.websocket.handler import router as websocket_router
 
@@ -20,4 +21,5 @@ app.add_middleware(
 )
 
 app.include_router(health_router)
+app.include_router(tickets_router)
 app.include_router(websocket_router)

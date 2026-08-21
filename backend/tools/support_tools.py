@@ -1,15 +1,16 @@
 import uuid
 
-from agents import function_tool
+from agents import RunContextWrapper, function_tool
 
+from backend.guardrails.context import SupportContext
 from backend.guardrails.tools import validate_ticket_input
-
-# In-memory mock ticket store. Replaced by the real Ticket DB model in Phase 7.
-_TICKETS: dict[str, dict] = {}
+from backend.services import escalation_service
 
 
 @function_tool(tool_input_guardrails=[validate_ticket_input])
-def create_support_ticket(reason: str, summary: str, priority: str = "normal") -> str:
+async def create_support_ticket(
+    ctx: RunContextWrapper[SupportContext], reason: str, summary: str, priority: str = "normal"
+) -> str:
     """Create a support ticket for a customer issue that needs human tracking
     or follow-up.
 
@@ -18,18 +19,21 @@ def create_support_ticket(reason: str, summary: str, priority: str = "normal") -
         summary: A structured summary of the customer's issue and relevant conversation context.
         priority: Ticket priority - one of "low", "normal", "high". Defaults to "normal".
     """
-    ticket_id = f"TCK-{uuid.uuid4().hex[:8].upper()}"
-    _TICKETS[ticket_id] = {
-        "reason": reason,
-        "summary": summary,
-        "priority": priority,
-        "status": "OPEN",
-    }
-    return ticket_id
+    support_context = ctx.context
+    conversation_id = (
+        uuid.UUID(support_context.conversation_id)
+        if support_context and support_context.conversation_id
+        else None
+    )
+    customer_reference = support_context.customer_id if support_context else None
+
+    return await escalation_service.create_ticket(
+        conversation_id, reason, summary, priority, customer_reference=customer_reference
+    )
 
 
 @function_tool
-def notify_human_team(ticket_id: str, summary: str) -> str:
+async def notify_human_team(ctx: RunContextWrapper[SupportContext], ticket_id: str, summary: str) -> str:
     """Notify the human support team (Email + Slack) that a new ticket needs
     their attention.
 
@@ -37,6 +41,4 @@ def notify_human_team(ticket_id: str, summary: str) -> str:
         ticket_id: The ticket ID returned by create_support_ticket.
         summary: A structured summary of the customer's issue to include in the notification.
     """
-    # Stub for Phase 3 — real Email/Slack delivery is wired in Phase 7.
-    print(f"[STUB NOTIFICATION] Email+Slack -> New ticket {ticket_id}\nSummary: {summary}")
-    return f"Human team notified for ticket {ticket_id}."
+    return await escalation_service.notify_human_team(ticket_id, summary)
