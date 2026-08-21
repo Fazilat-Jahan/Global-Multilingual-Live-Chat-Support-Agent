@@ -1,7 +1,10 @@
 """Orchestration wrapper around Runner.run() / Runner.run_streamed() that
 enforces the guardrail contract end to end: catches tripwires, converts them
 into safe customer-facing messages, and attempts one corrective retry for a
-language-consistency violation before falling back to a safe block.
+language-consistency violation before falling back to a safe block. Every
+Runner call goes through DEFAULT_RUN_CONFIG so transient Gemini failures
+(5xx, network errors) are retried at the model layer instead of surfacing
+straight to the customer (see backend/model_provider.py).
 
 run_turn() is used by the Phase 3-5 CLI harnesses (single result, no
 incremental events). stream_turn() is what backend.websocket.handler (Phase
@@ -10,6 +13,7 @@ the run progresses, ending with one "outcome" event carrying the same
 TurnOutcome for persistence.
 """
 
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -27,6 +31,47 @@ from agents import (
 
 from backend.guardrails.context import SupportContext
 from backend.guardrails.security import SAFE_BLOCKED_MESSAGE, SAFE_ERROR_MESSAGE
+from backend.model_provider import DEFAULT_RUN_CONFIG
+
+logger = logging.getLogger(__name__)
+
+# Chat Completions streaming occasionally ends a turn early under upstream
+# load without raising an error at all (no tripwire, no exception) — the
+# runner-managed retry above can't catch this because nothing failed from
+# its point of view. This is a last-resort heuristic safety net: if the
+# final text doesn't end on a sentence boundary, ask the same agent to
+# finish the thought and stream the continuation into the same message
+# before completing the turn.
+_COMPLETE_ENDINGS = tuple(".!?…\"'”’)]}`。!?:")
+_MAX_CONTINUATION_ATTEMPTS = 1
+
+
+def _looks_incomplete(text: str) -> bool:
+    stripped = text.rstrip()
+    return bool(stripped) and not stripped.endswith(_COMPLETE_ENDINGS)
+
+
+async def _continue_incomplete_output(
+    agent: Agent, input: str | list, context: SupportContext, partial_text: str
+) -> str | None:
+    conversation = (input if isinstance(input, list) else [{"role": "user", "content": input}]) + [
+        {"role": "assistant", "content": partial_text},
+        {
+            "role": "user",
+            "content": (
+                "(System reminder: your previous reply was cut off mid-sentence. Continue it "
+                "naturally from exactly where it stopped. Do not repeat any of the text above, "
+                "do not restart the sentence, and do not add a greeting — output only the "
+                "missing continuation, in the same language.)"
+            ),
+        },
+    ]
+    try:
+        result = await Runner.run(agent, conversation, context=context, run_config=DEFAULT_RUN_CONFIG)
+    except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
+        return None
+    continuation = result.final_output if isinstance(result.final_output, str) else str(result.final_output)
+    return continuation.strip() or None
 
 
 @dataclass
@@ -58,7 +103,7 @@ async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> 
     context.latest_user_message = input if isinstance(input, str) else _last_user_text(input)
 
     try:
-        result = await Runner.run(agent, input, context=context)
+        result = await Runner.run(agent, input, context=context, run_config=DEFAULT_RUN_CONFIG)
     except InputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
         safe_message = info.get("safe_message", SAFE_BLOCKED_MESSAGE)
@@ -73,8 +118,18 @@ async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> 
                 return retried
 
         return TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, reason, None)
+    except Exception:
+        logger.exception("Unhandled error during agent turn for session %s", context.session_id)
+        return TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, "internal_error", None)
 
-    return TurnOutcome(result.last_agent, result.final_output, False, None, result)
+    final_text = result.final_output
+    if isinstance(final_text, str) and _looks_incomplete(final_text):
+        continuation = await _continue_incomplete_output(agent, input, context, final_text)
+        if continuation:
+            joiner = "" if final_text.endswith((" ", "\n")) else " "
+            final_text = final_text + joiner + continuation
+
+    return TurnOutcome(result.last_agent, final_text, False, None, result)
 
 
 async def _retry_for_language(agent: Agent, input, context: SupportContext, expected_language: str | None):
@@ -89,7 +144,7 @@ async def _retry_for_language(agent: Agent, input, context: SupportContext, expe
         }
     ]
     try:
-        result = await Runner.run(agent, corrective_input, context=context)
+        result = await Runner.run(agent, corrective_input, context=context, run_config=DEFAULT_RUN_CONFIG)
     except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
         return None
     return TurnOutcome(result.last_agent, result.final_output, False, None, result)
@@ -134,7 +189,7 @@ async def stream_turn(
     pending_tool_calls: dict[str, str] = {}
 
     try:
-        result = Runner.run_streamed(agent, input, context=context)
+        result = Runner.run_streamed(agent, input, context=context, run_config=DEFAULT_RUN_CONFIG)
         async for event in result.stream_events():
             if isinstance(event, AgentUpdatedStreamEvent):
                 new_name = event.new_agent.name
@@ -193,9 +248,32 @@ async def stream_turn(
         yield StreamEvent("response_completed", {"agent": current_agent_name, "text": SAFE_ERROR_MESSAGE})
         yield StreamEvent("outcome", {"outcome": TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, reason, None)})
         return
+    except Exception:
+        # A transient provider failure (e.g. Gemini 5xx/network drop) that
+        # exhausted DEFAULT_RUN_CONFIG's retries, or any other unexpected
+        # error. Caught here (rather than only in the WebSocket handler) so
+        # the turn still ends with a terminal event + outcome — otherwise
+        # stream_message() never reaches record_turn() and the user's
+        # message is silently dropped from conversation history.
+        logger.exception("Unhandled error during agent turn for session %s", context.session_id)
+        yield StreamEvent("response_delta", {"delta": SAFE_ERROR_MESSAGE, "agent": current_agent_name})
+        yield StreamEvent("response_completed", {"agent": current_agent_name, "text": SAFE_ERROR_MESSAGE})
+        yield StreamEvent(
+            "outcome",
+            {"outcome": TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, "internal_error", None)},
+        )
+        return
 
     final_text = result.final_output if isinstance(result.final_output, str) else str(result.final_output)
     final_agent = result.last_agent
+
+    if _looks_incomplete(final_text):
+        continuation = await _continue_incomplete_output(agent, input, context, final_text)
+        if continuation:
+            joiner = "" if final_text.endswith((" ", "\n")) else " "
+            yield StreamEvent("response_delta", {"delta": joiner + continuation, "agent": final_agent.name})
+            final_text = final_text + joiner + continuation
+
     yield StreamEvent("response_completed", {"agent": final_agent.name, "text": final_text})
 
     if final_agent.name == "Escalation Agent":

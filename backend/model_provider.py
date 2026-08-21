@@ -1,6 +1,10 @@
 from agents import (
     AsyncOpenAI,
+    ModelRetrySettings,
+    ModelSettings,
     OpenAIChatCompletionsModel,
+    RunConfig,
+    retry_policies,
     set_tracing_disabled,
 )
 
@@ -28,3 +32,23 @@ gemini_model = OpenAIChatCompletionsModel(
     model=MODEL_NAME,
     openai_client=external_client,
 )
+
+# Gemini's OpenAI-compatible endpoint intermittently returns transient 5xx
+# ("high demand") errors and connection drops. The Agents SDK's runner-managed
+# retry is opt-in (agents/run_internal/model_retry.py returns retry=False
+# whenever no policy is configured) — without this, a single transient
+# failure surfaces straight to the customer as a generic error. This is
+# applied via RunConfig at every Runner.run/run_streamed call site
+# (backend/guardrails/runner.py) rather than per-agent, so it's defined once
+# and covers every agent uniformly.
+_RETRY_POLICY = retry_policies.any(
+    retry_policies.provider_suggested(),
+    retry_policies.network_error(),
+    retry_policies.http_status([408, 429, 500, 502, 503, 504]),
+)
+
+DEFAULT_MODEL_SETTINGS = ModelSettings(
+    retry=ModelRetrySettings(max_retries=3, policy=_RETRY_POLICY),
+)
+
+DEFAULT_RUN_CONFIG = RunConfig(model_settings=DEFAULT_MODEL_SETTINGS)
