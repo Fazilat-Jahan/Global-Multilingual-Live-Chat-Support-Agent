@@ -24,8 +24,8 @@ from backend.db.connection import AsyncSessionLocal
 from backend.db.models import Conversation, ConversationStatus
 from backend.guardrails.context import SupportContext
 from backend.guardrails.runner import StreamEvent, TurnOutcome, run_turn, stream_turn
-from backend.guardrails.security import detect_language
-from backend.services import session_service
+from backend.guardrails.security import detect_language, mask_emails
+from backend.services import session_service, verification_service
 
 _AGENT_REGISTRY: dict[str, Agent] = {
     triage_agent.name: triage_agent,
@@ -58,31 +58,40 @@ async def load_or_create(session_id: str, customer_id: str | None = None) -> Con
             conversation = await repository.get_or_create_conversation(db, session_id, customer_id)
         messages = await repository.get_messages(db, conversation.id)
 
-    input_history = [
-        {"role": m.role, "content": m.content} for m in messages if m.role in ("user", "assistant")
-    ]
+    input_history = [{"role": m.role, "content": m.content} for m in messages if m.role in ("user", "assistant")]
 
-    last_assistant_message = next(
-        (m for m in reversed(messages) if m.role == "assistant" and m.agent), None
-    )
+    last_assistant_message = next((m for m in reversed(messages) if m.role == "assistant" and m.agent), None)
     resume_agent = (
-        _AGENT_REGISTRY.get(last_assistant_message.agent, triage_agent)
-        if last_assistant_message
-        else triage_agent
+        _AGENT_REGISTRY.get(last_assistant_message.agent, triage_agent) if last_assistant_message else triage_agent
     )
 
     await session_service.cache_conversation_id(session_id, str(conversation.id))
     return ConversationSession(conversation=conversation, resume_agent=resume_agent, input_history=input_history)
 
 
+async def _build_support_context(session_id: str, customer_id: str | None, conversation_id: str) -> SupportContext:
+    """SupportContext for a new turn, seeded with the session's spec 4.1
+    verified-customer set so protected tools' guardrails can enforce
+    verification without a Redis round trip per tool call."""
+    return SupportContext(
+        session_id=session_id,
+        customer_id=customer_id,
+        conversation_id=conversation_id,
+        verified_customer_ids=await verification_service.get_verified_customer_ids(session_id),
+    )
+
+
 async def record_turn(conversation: Conversation, user_message: str, outcome: TurnOutcome) -> None:
     async with AsyncSessionLocal() as db:
-        await repository.add_message(db, conversation.id, role="user", content=user_message)
+        # Spec 4.1: the verification email is passed to the verification tool
+        # live but never stored in durable conversation history — mask email
+        # addresses out of both sides of the persisted turn.
+        await repository.add_message(db, conversation.id, role="user", content=mask_emails(user_message))
         await repository.add_message(
             db,
             conversation.id,
             role="assistant",
-            content=outcome.output_text,
+            content=mask_emails(outcome.output_text),
             agent=outcome.final_agent.name,
             metadata={"blocked": outcome.blocked, "block_reason": outcome.block_reason},
         )
@@ -111,13 +120,9 @@ async def handle_message(
     runs one guardrail-wrapped agent turn, and persists both sides of it.
     """
     session = await load_or_create(session_id, customer_id)
-    support_context = SupportContext(
-        session_id=session_id, customer_id=customer_id, conversation_id=str(session.conversation.id)
-    )
+    support_context = await _build_support_context(session_id, customer_id, str(session.conversation.id))
 
-    outcome = await run_turn(
-        session.resume_agent, user_message, support_context, history=session.input_history
-    )
+    outcome = await run_turn(session.resume_agent, user_message, support_context, history=session.input_history)
     await record_turn(session.conversation, user_message, outcome)
     return outcome, session.conversation
 
@@ -132,14 +137,10 @@ async def stream_message(
     WebSocket handler must not forward it to the client.
     """
     session = await load_or_create(session_id, customer_id)
-    support_context = SupportContext(
-        session_id=session_id, customer_id=customer_id, conversation_id=str(session.conversation.id)
-    )
+    support_context = await _build_support_context(session_id, customer_id, str(session.conversation.id))
 
     outcome: TurnOutcome | None = None
-    async for event in stream_turn(
-        session.resume_agent, user_message, support_context, history=session.input_history
-    ):
+    async for event in stream_turn(session.resume_agent, user_message, support_context, history=session.input_history):
         if event.kind == "outcome":
             outcome = event.payload["outcome"]
         yield event

@@ -35,7 +35,5 @@ async def search_knowledge_base(query: str) -> str:
     if not chunks:
         return NO_RESULTS_MESSAGE
 
-    formatted = "\n\n---\n\n".join(
-        f"Source: {chunk.title} ({chunk.source})\n{chunk.text}" for chunk in chunks
-    )
+    formatted = "\n\n---\n\n".join(f"Source: {chunk.title} ({chunk.source})\n{chunk.text}" for chunk in chunks)
     return formatted

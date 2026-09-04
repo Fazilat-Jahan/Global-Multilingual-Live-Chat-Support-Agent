@@ -14,9 +14,7 @@ async def get_conversation_by_id(db: AsyncSession, conversation_id: uuid.UUID) -
     return await db.get(Conversation, conversation_id)
 
 
-async def get_or_create_conversation(
-    db: AsyncSession, session_id: str, customer_id: str | None = None
-) -> Conversation:
+async def get_or_create_conversation(db: AsyncSession, session_id: str, customer_id: str | None = None) -> Conversation:
     result = await db.execute(select(Conversation).where(Conversation.session_id == session_id))
     conversation = result.scalar_one_or_none()
     if conversation is not None:
@@ -30,8 +28,12 @@ async def get_or_create_conversation(
 
 
 async def get_messages(db: AsyncSession, conversation_id: uuid.UUID) -> list[Message]:
+    # Phase 17 (spec 20.3): filter by tenant_id for defence-in-depth
+    # (conversation is already tenant-scoped, but messages carry their own key).
     result = await db.execute(
-        select(Message).where(Message.conversation_id == conversation_id).order_by(Message.created_at)
+        select(Message)
+        .where(Message.conversation_id == conversation_id, Message.tenant_id == _settings.tenant_id)
+        .order_by(Message.created_at)
     )
     return list(result.scalars().all())
 
@@ -45,7 +47,12 @@ async def add_message(
     metadata: dict | None = None,
 ) -> Message:
     message = Message(
-        conversation_id=conversation_id, role=role, content=content, agent=agent, metadata_=metadata
+        conversation_id=conversation_id,
+        tenant_id=_settings.tenant_id,
+        role=role,
+        content=content,
+        agent=agent,
+        metadata_=metadata,
     )
     db.add(message)
     await db.commit()

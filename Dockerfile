@@ -14,5 +14,8 @@ RUN pip install --no-cache-dir -e .
 
 EXPOSE 8000
 
-# $PORT is provided by Railway/Render at runtime; 8000 is the local/default fallback.
-CMD ["sh", "-c", "uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+# Phase 13 (spec 6.2): run Alembic migrations before starting the app so
+# the schema is always up to date on deployment. The `alembic` CLI is run
+# from the backend/ directory (where alembic.ini lives); uvicorn starts
+# from the project root.
+CMD ["sh", "-c", "cd backend && alembic upgrade head && cd /app && uvicorn backend.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -47,9 +47,7 @@ async def _delete_ticket(ticket_id: str) -> None:
 
 @pytest.mark.asyncio
 async def test_create_support_ticket_persists_a_real_row():
-    args = json.dumps(
-        {"reason": "unit test", "summary": "pytest create_support_ticket smoke test", "priority": "low"}
-    )
+    args = json.dumps({"reason": "unit test", "summary": "pytest create_support_ticket smoke test", "priority": "low"})
     ticket_id = await create_support_ticket.on_invoke_tool(_ctx("create_support_ticket", args), args)
 
     assert ticket_id.startswith("TCK-")
@@ -64,9 +62,7 @@ async def test_create_support_ticket_persists_a_real_row():
 
 
 def test_validate_ticket_input_rejects_missing_reason():
-    ctx = _ctx(
-        "create_support_ticket", json.dumps({"reason": "", "summary": "some summary", "priority": "normal"})
-    )
+    ctx = _ctx("create_support_ticket", json.dumps({"reason": "", "summary": "some summary", "priority": "normal"}))
     result = validate_ticket_input.guardrail_function(ToolInputGuardrailData(context=ctx, agent=triage_agent))
     assert result.behavior["type"] == "reject_content"
     assert "needs both a reason and a summary" in result.behavior["message"].lower()

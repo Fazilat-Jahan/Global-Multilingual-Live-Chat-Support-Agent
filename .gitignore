@@ -1,11 +1,23 @@
 .venv/
 __pycache__/
 *.pyc
-.env
 *.egg-info/
 .pytest_cache/
+.coverage
+
+# Local environment and secret material — never commit.
+.env
+.env.local
+.env.*.local
+credentials/
+secrets/
+*.pem
+*.key
+
 node_modules/
 .next/
 dist/
 build/
-.env.example
+*.tsbuildinfo
+screenshot_*.png
+

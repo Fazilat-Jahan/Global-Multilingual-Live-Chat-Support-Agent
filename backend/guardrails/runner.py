@@ -83,9 +83,7 @@ class TurnOutcome:
     run_result: RunResult | None
 
 
-async def run_turn(
-    agent: Agent, message: str, context: SupportContext, history: list | None = None
-) -> TurnOutcome:
+async def run_turn(agent: Agent, message: str, context: SupportContext, history: list | None = None) -> TurnOutcome:
     """Runs one turn. If `history` is given (e.g. reloaded from Postgres
     after a reconnect), the turn resumes from that prior context instead of
     starting a fresh conversation.
@@ -232,21 +230,39 @@ async def stream_turn(
         info = exc.guardrail_result.output.output_info or {}
         reason = info.get("reason", "output_blocked")
 
+        # Spec 9.2: the streamed content that reached the client before the
+        # guardrail tripped must be retracted — emit response_retracted so the
+        # frontend swaps it with safe replacement text. The blocked content is
+        # logged server-side for audit but never persisted.
+        blocked_output = exc.guardrail_result.agent_output or ""
+        logger.warning(
+            "Output guardrail blocked response for session %s (reason=%s, "
+            "blocked_length=%d). Blocked content logged but not persisted.",
+            context.session_id,
+            reason,
+            len(str(blocked_output)),
+        )
+
         if reason == "language_mismatch":
             retried = await _retry_for_language(agent, input, context, info.get("expected_language"))
             if retried is not None:
+                # Retract the bad-language content already streamed, then
+                # emit the retry as a fresh message.
                 yield StreamEvent(
-                    "response_delta", {"delta": retried.output_text, "agent": retried.final_agent.name}
+                    "response_retracted",
+                    {"reason": reason, "replacement": retried.output_text},
                 )
+                yield StreamEvent("response_delta", {"delta": retried.output_text, "agent": retried.final_agent.name})
                 yield StreamEvent(
                     "response_completed", {"agent": retried.final_agent.name, "text": retried.output_text}
                 )
                 yield StreamEvent("outcome", {"outcome": retried})
                 return
 
-        yield StreamEvent("response_delta", {"delta": SAFE_ERROR_MESSAGE, "agent": current_agent_name})
-        yield StreamEvent("response_completed", {"agent": current_agent_name, "text": SAFE_ERROR_MESSAGE})
-        yield StreamEvent("outcome", {"outcome": TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, reason, None)})
+        replacement = SAFE_ERROR_MESSAGE
+        yield StreamEvent("response_retracted", {"reason": reason, "replacement": replacement})
+        yield StreamEvent("response_completed", {"agent": current_agent_name, "text": replacement})
+        yield StreamEvent("outcome", {"outcome": TurnOutcome(agent, replacement, True, reason, None)})
         return
     except Exception:
         # A transient provider failure (e.g. Gemini 5xx/network drop) that

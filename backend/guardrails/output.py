@@ -14,7 +14,21 @@ from backend.guardrails.security import (
 # to avoid false positives (e.g. Roman Urdu / English / other Latin-script
 # languages getting misclassified against each other).
 _LATIN_SCRIPT_LANGS = {
-    "en", "es", "fr", "de", "it", "pt", "nl", "id", "so", "tl", "sw", "cy", "da", "sv", "no",
+    "en",
+    "es",
+    "fr",
+    "de",
+    "it",
+    "pt",
+    "nl",
+    "id",
+    "so",
+    "tl",
+    "sw",
+    "cy",
+    "da",
+    "sv",
+    "no",
 }
 
 _EXPLICIT_LANGUAGE_REQUEST_PATTERN = re.compile(

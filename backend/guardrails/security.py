@@ -26,9 +26,7 @@ SAFE_ERROR_MESSAGE = (
     "to speak with a human and we'll follow up with you directly."
 )
 
-RATE_LIMIT_MESSAGE = (
-    "You're sending messages a bit too quickly. Please wait a moment and try again."
-)
+RATE_LIMIT_MESSAGE = "You're sending messages a bit too quickly. Please wait a moment and try again."
 
 KNOWLEDGE_BASE_UNAVAILABLE_MESSAGE = (
     "I'm temporarily unable to access the support knowledge base. Please try again "
@@ -121,6 +119,15 @@ def mask_pii(text: str) -> str:
     redacted = _EMAIL_PATTERN.sub("[redacted-email]", redacted)
     redacted = _PHONE_PATTERN.sub("[redacted-phone]", redacted)
     return redacted
+
+
+def mask_emails(text: str) -> str:
+    """Redacts email addresses only (no phone/card handling). Used on message
+    content before it is persisted to durable conversation history — spec 4.1:
+    a verification email is passed to the verification tool live, then
+    discarded from the stored message history.
+    """
+    return _EMAIL_PATTERN.sub("[redacted-email]", text)
 
 
 def detect_language(text: str) -> str | None:

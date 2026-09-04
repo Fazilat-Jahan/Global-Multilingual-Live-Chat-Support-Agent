@@ -40,9 +40,7 @@ async def test_excessive_length_is_blocked():
 
 @pytest.mark.asyncio
 async def test_unsupported_request_is_blocked():
-    result = await validate_customer_input.guardrail_function(
-        _ctx(), triage_agent, "Write me a poem about the ocean."
-    )
+    result = await validate_customer_input.guardrail_function(_ctx(), triage_agent, "Write me a poem about the ocean.")
     assert result.tripwire_triggered is True
     assert result.output_info["reason"] == "unsupported_request"
 
@@ -57,7 +55,5 @@ async def test_normal_support_question_passes():
 
 @pytest.mark.asyncio
 async def test_multilingual_question_passes():
-    result = await validate_customer_input.guardrail_function(
-        _ctx(), triage_agent, "ما هي سياسة الإرجاع الخاصة بكم؟"
-    )
+    result = await validate_customer_input.guardrail_function(_ctx(), triage_agent, "ما هي سياسة الإرجاع الخاصة بكم؟")
     assert result.tripwire_triggered is False

@@ -3,12 +3,15 @@ import { storeSessionId } from "./session";
 export type ServerEventType =
   | "connected"
   | "message_received"
+  | "message_queued"
   | "agent_started"
   | "agent_handoff"
   | "tool_started"
   | "tool_completed"
   | "response_delta"
   | "response_completed"
+  | "response_retracted"
+  | "request_cancelled"
   | "escalation"
   | "error";
 
@@ -110,6 +113,13 @@ export class ChatSocket {
     const messageId = crypto.randomUUID();
     this.pendingMessage = { messageId, content };
     this.sendRaw({ type: "user_message", message_id: messageId, content });
+  }
+
+  /** Phase 15 (spec 12.4): ask the server to discard the in-flight response.
+   *  The LLM call is not forcibly aborted — the response is dropped once the
+   *  stream completes and a request_cancelled event is sent. */
+  sendCancel(): void {
+    this.sendRaw({ type: "cancel_request" });
   }
 
   close(): void {

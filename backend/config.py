@@ -49,6 +49,34 @@ class Settings(BaseSettings):
     # full tenant-management system (out of scope for this MVP).
     tenant_id: str = "default"
 
+    # Admin API key (Phase 16, spec 18.2) — protects the re-ingestion
+    # endpoint. If empty, admin endpoints return 403. Set via env var in
+    # production; the dev default allows local testing with any value.
+    admin_api_key: str = ""
+
+    # CORS / origin allowlist (spec 12.3) — comma-separated origins (scheme +
+    # host + port, no trailing slash) allowed to call the API directly and to
+    # open WebSocket upgrades. The embedded widget talks to this backend from
+    # the widget host's own origin inside its iframe; anything else must be
+    # explicitly listed. Default matches the local dev frontend; production
+    # must set this to the client website domain(s) plus the widget host.
+    allowed_origins: str = "http://localhost:3000"
+
+    @property
+    def allowed_origin_list(self) -> list[str]:
+        """ALLOWED_ORIGINS parsed into a clean list (spec 12.3)."""
+        return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def qdrant_collection_name(self) -> str:
+        """Phase 17 (spec 20.3): per-tenant Qdrant collection name."""
+        return f"{self.tenant_id}_knowledge_base"
+
+    @property
+    def tenant_key_prefix(self) -> str:
+        """Phase 17 (spec 20.3): tenant-scoped prefix for all Redis keys."""
+        return f"{self.tenant_id}:"
+
 
 @lru_cache
 def get_settings() -> Settings:

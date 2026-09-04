@@ -97,9 +97,7 @@ async def _search_once(
         query=query_vector,
         limit=top_k,
         score_threshold=score_threshold,
-        query_filter=Filter(
-            must=[FieldCondition(key="tenant_id", match=MatchValue(value=settings.tenant_id))]
-        ),
+        query_filter=Filter(must=[FieldCondition(key="tenant_id", match=MatchValue(value=settings.tenant_id))]),
     )
     return [
         RetrievedChunk(

@@ -49,9 +49,7 @@ def test_authorize_order_access_rejects_malformed_order_id():
 
 
 def test_validate_ticket_input_rejects_empty_summary():
-    data = _guardrail_data(
-        "create_support_ticket", None, {"reason": "billing", "summary": "", "priority": "normal"}
-    )
+    data = _guardrail_data("create_support_ticket", None, {"reason": "billing", "summary": "", "priority": "normal"})
     result = validate_ticket_input.guardrail_function(data)
     assert result.behavior["type"] == "reject_content"
 

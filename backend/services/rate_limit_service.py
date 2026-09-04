@@ -13,7 +13,10 @@ from backend.config import get_settings
 
 settings = get_settings()
 
-_KEY_PREFIX = "ratelimit:"
+# Phase 17 (spec 20.3): all Redis keys prefixed with {tenant_id}: so a
+# shared Redis instance can't cross-contaminate rate-limit counters between
+# tenants.
+_KEY_PREFIX = f"{settings.tenant_id}:ratelimit:"
 
 
 def _client() -> Redis:
@@ -41,9 +44,7 @@ async def check_session_and_ip(session_id: str, client_ip: str | None) -> tuple[
     — reason is "session" or "ip" when rejected, so the caller can log which
     limit tripped without exposing that detail to the customer.
     """
-    session_ok = await check_and_increment(
-        f"session:{session_id}", settings.rate_limit_per_session_per_minute
-    )
+    session_ok = await check_and_increment(f"session:{session_id}", settings.rate_limit_per_session_per_minute)
     if not session_ok:
         return False, "session"
 

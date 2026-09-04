@@ -1,0 +1,24 @@
+{
+  "include": ["backend"],
+  "exclude": [
+    "backend/tests",
+    "backend/scripts",
+    "**/__pycache__",
+    "**/*.egg-info"
+  ],
+  "typeCheckingMode": "basic",
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "reportGeneralTypeIssues": false,
+  "reportOptionalMemberAccess": false,
+  "reportOptionalSubscript": false,
+  "reportOptionalCall": false,
+  "reportOptionalIterable": false,
+  "reportAttributeAccessIssue": false,
+  "reportArgumentType": false,
+  "reportReturnType": false,
+  "reportCallIssue": false,
+  "reportPrivateImportUsage": false,
+  "reportUnnecessaryTypeIgnoreComment": false,
+  "pythonVersion": "3.11"
+}

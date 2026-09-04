@@ -41,6 +41,38 @@ services:
     volumes:
       - qdrant_data:/qdrant/storage
 
+  # Phase 18 (spec 22.1): app service for full-stack local development.
+  # Builds the backend Dockerfile, runs Alembic migrations on startup,
+  # then starts uvicorn. Depends on all infrastructure services.
+  # Requires GEMINI_API_KEY in a local .env file (see .env.example).
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: support_agent_app
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://support_user:support_pass@postgres:5432/support_agent
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      QDRANT_API_KEY: ""
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL_NAME: ${GEMINI_MODEL_NAME:-gemini-flash-latest}
+      GEMINI_EMBEDDING_MODEL: ${GEMINI_EMBEDDING_MODEL:-gemini-embedding-001}
+      TENANT_ID: ${TENANT_ID:-default}
+      ADMIN_API_KEY: ${ADMIN_API_KEY:-dev-admin-key}
+      APP_ENV: development
+      LOG_LEVEL: DEBUG
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
 volumes:
   postgres_data:
   redis_data:

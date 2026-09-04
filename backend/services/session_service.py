@@ -11,7 +11,9 @@ from backend.config import get_settings
 settings = get_settings()
 
 SESSION_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
-_SESSION_KEY_PREFIX = "session:conversation_id:"
+# Phase 17 (spec 20.3): all Redis keys prefixed with {tenant_id}: so a
+# shared Redis instance can't cross-contaminate sessions between tenants.
+_SESSION_KEY_PREFIX = f"{settings.tenant_id}:session:conversation_id:"
 
 
 def _client() -> Redis:

@@ -9,6 +9,7 @@ interface ChatWindowProps {
   messages: ChatMessage[];
   statusLine: string | null;
   connectionStatus: ConnectionStatus;
+  isStreaming: boolean;
   onSend: (content: string) => void;
   onClose?: () => void;
 }
@@ -29,6 +30,7 @@ export default function ChatWindow({
   messages,
   statusLine,
   connectionStatus,
+  isStreaming,
   onSend,
   onClose,
 }: ChatWindowProps) {
@@ -57,7 +59,7 @@ export default function ChatWindow({
       </div>
 
       <MessageList messages={messages} statusLine={statusLine} />
-      <ChatInput onSend={onSend} disabled={connectionStatus !== "open"} />
+      <ChatInput onSend={onSend} disabled={connectionStatus !== "open" || isStreaming} />
     </div>
   );
 }

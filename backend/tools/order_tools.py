@@ -31,6 +31,4 @@ def check_refund_status(order_id: str) -> str:
     Args:
         order_id: The order ID the refund is associated with.
     """
-    return _MOCK_REFUNDS.get(
-        order_id, "No refund found for this order ID. Please double-check the order number."
-    )
+    return _MOCK_REFUNDS.get(order_id, "No refund found for this order ID. Please double-check the order number.")

@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -18,3 +18,9 @@ class SupportContext:
     # turn, so guardrails can compare the user's current-turn language
     # against the agent's response language.
     latest_user_message: str = ""
+    # Spec 4.1 mid-conversation verification: customer_ids this session has
+    # verified (order ID + email match). Loaded from Redis by
+    # conversation_service at turn start; the verify_customer tool adds to it
+    # in-run. Protected tools check this via their tool guardrail before the
+    # tool body is allowed to run.
+    verified_customer_ids: set[str] = field(default_factory=set)

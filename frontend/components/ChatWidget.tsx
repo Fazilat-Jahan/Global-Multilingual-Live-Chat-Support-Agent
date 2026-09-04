@@ -5,6 +5,18 @@ import { ChatSocket, type ConnectionStatus, type ServerEvent } from "@/lib/webso
 import { getStoredSessionId } from "@/lib/session";
 import ChatWindow from "./ChatWindow";
 
+// Phase 12 (spec 5.1): postMessage bridge for the embedded widget variant.
+// No sensitive data crosses the boundary — only opaque command types with a
+// `source` discriminator; the host validates against the widget origin.
+const EMBEDDED_MESSAGE_SOURCE = "support-chat-widget";
+const HOST_MESSAGE_SOURCE = "support-chat-host";
+
+function postToHost(type: string): void {
+  if (typeof window !== "undefined" && window.parent !== window) {
+    window.parent.postMessage({ source: EMBEDDED_MESSAGE_SOURCE, type }, "*");
+  }
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -28,13 +40,23 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("connecting");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [statusLine, setStatusLine] = useState<string | null>(null);
+  // Phase 15 (spec 12.4): disable send while a response is streaming.
+  const [isStreaming, setIsStreaming] = useState(false);
+  // Whether the embedded variant is actually inside a host-page iframe.
+  // Resolved client-side to avoid SSR hydration mismatches.
+  const [isFramed, setIsFramed] = useState(false);
 
   const socketRef = useRef<ChatSocket | null>(null);
   const streamingMessageIdRef = useRef<string | null>(null);
 
   const handleEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
+      case "message_queued":
+        setStatusLine(`Message queued (position ${event.position as number})…`);
+        break;
+
       case "agent_started":
+        setIsStreaming(true);
         setStatusLine(`${event.agent as string} is looking into this…`);
         break;
 
@@ -70,6 +92,7 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
       case "response_completed": {
         const finalText = event.text as string;
         setStatusLine(null);
+        setIsStreaming(false);
         setMessages((prev) => {
           if (streamingMessageIdRef.current) {
             const id = streamingMessageIdRef.current;
@@ -79,6 +102,30 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
             );
           }
           return [...prev, { id: crypto.randomUUID(), role: "assistant", text: finalText }];
+        });
+        break;
+      }
+
+      // Phase 14 (spec 9.2): output guardrail blocked the streamed response.
+      // Replace the partially-streamed message content with the safe
+      // replacement text. streamingMessageIdRef stays set so the subsequent
+      // response_completed finalises the same message.
+      case "response_retracted": {
+        const replacement = event.replacement as string;
+        setStatusLine(null);
+        setMessages((prev) => {
+          if (streamingMessageIdRef.current) {
+            return prev.map((message) =>
+              message.id === streamingMessageIdRef.current
+                ? { ...message, text: replacement }
+                : message
+            );
+          }
+          // Edge case: no deltas arrived before retraction — create a new
+          // assistant message with the replacement text.
+          const id = crypto.randomUUID();
+          streamingMessageIdRef.current = id;
+          return [...prev, { id, role: "assistant", text: replacement, streaming: true }];
         });
         break;
       }
@@ -95,11 +142,22 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
 
       case "error":
         setStatusLine(null);
+        setIsStreaming(false);
         streamingMessageIdRef.current = null;
         setMessages((prev) => [
           ...prev,
           { id: crypto.randomUUID(), role: "assistant", text: event.message as string, kind: "error" },
         ]);
+        break;
+
+      // Phase 15 (spec 12.4): server discarded the in-flight response
+      // after a cancel_request. Clear streaming state; any partial message
+      // stays in the UI as-is (the server-side queue will drain the
+      // cancelled message's turn and process the next one).
+      case "request_cancelled":
+        setStatusLine(null);
+        setIsStreaming(false);
+        streamingMessageIdRef.current = null;
         break;
 
       default:
@@ -122,6 +180,26 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
     };
   }, [handleEvent]);
 
+  // Phase 12 (spec 5.1): when embedded in a host-page iframe, announce
+  // readiness and listen for the host's open/close commands. Origin-validated
+  // on receive (the widget doesn't know the embedder's identity ahead of
+  // time, but commands carry no sensitive data — at worst a malicious host
+  // can close the widget on its own page).
+  useEffect(() => {
+    if (variant !== "embedded") return;
+    if (typeof window === "undefined" || window.parent === window) return;
+    setIsFramed(true);
+    postToHost("ready");
+
+    const onHostMessage = (event: MessageEvent) => {
+      const data = event.data as { source?: string; type?: string } | null;
+      if (!data || data.source !== HOST_MESSAGE_SOURCE) return;
+      if (data.type === "close") postToHost("close");
+    };
+    window.addEventListener("message", onHostMessage);
+    return () => window.removeEventListener("message", onHostMessage);
+  }, [variant]);
+
   const sendMessage = useCallback((content: string) => {
     setMessages((prev) => [...prev, { id: crypto.randomUUID(), role: "user", text: content }]);
     socketRef.current?.sendUserMessage(content);
@@ -134,7 +212,9 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
           messages={messages}
           statusLine={statusLine}
           connectionStatus={connectionStatus}
+          isStreaming={isStreaming}
           onSend={sendMessage}
+          onClose={isFramed ? () => postToHost("close") : undefined}
         />
       </div>
     );
@@ -148,6 +228,7 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
             messages={messages}
             statusLine={statusLine}
             connectionStatus={connectionStatus}
+            isStreaming={isStreaming}
             onSend={sendMessage}
             onClose={() => setIsOpen(false)}
           />

@@ -21,9 +21,7 @@ async def create_support_ticket(
     """
     support_context = ctx.context
     conversation_id = (
-        uuid.UUID(support_context.conversation_id)
-        if support_context and support_context.conversation_id
-        else None
+        uuid.UUID(support_context.conversation_id) if support_context and support_context.conversation_id else None
     )
     customer_reference = support_context.customer_id if support_context else None
 

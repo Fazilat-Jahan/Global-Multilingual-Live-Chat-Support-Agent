@@ -12,6 +12,13 @@ _ORDER_OWNERS: dict[str, str] = {
 }
 
 
+def get_order_owner(order_id: str) -> str | None:
+    """The customer_id that owns an order, or None for unknown order IDs.
+    Shared by the order tool guardrail and the spec 4.1 verification provider
+    so the order -> customer mapping stays single-sourced."""
+    return _ORDER_OWNERS.get(order_id)
+
+
 def is_authorized_for_order(customer_id: str | None, order_id: str) -> bool:
     """Whether the given (possibly anonymous) customer may access this
     order's status/refund information.

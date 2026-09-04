@@ -48,3 +48,10 @@ services:
         value: "60"
       - key: TENANT_ID
         value: default
+      # Phase 16 (spec 18.2): admin API key for knowledge base re-ingestion.
+      - key: ADMIN_API_KEY
+        sync: false
+      # Phase 12 (spec 12.3): CORS / origin policy for the production backend.
+      # Must list the client website domain(s) plus the widget host origin.
+      - key: ALLOWED_ORIGINS
+        sync: false

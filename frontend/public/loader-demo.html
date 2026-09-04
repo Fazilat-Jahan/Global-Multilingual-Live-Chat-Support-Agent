@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Support Chat — Loader Script Demo (Phase 12, spec 5.1)</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        margin: 0;
+        padding: 2rem;
+        background: #f1f5f9;
+        color: #1e293b;
+        line-height: 1.5;
+      }
+      h1 { font-size: 1.5rem; }
+      .controls {
+        display: flex; gap: 0.5rem; flex-wrap: wrap;
+        margin: 1rem 0 2rem;
+      }
+      button {
+        padding: 0.5rem 1rem; border-radius: 6px; border: 1px solid #cbd5e1;
+        background: #fff; cursor: pointer; font-size: 0.875rem;
+      }
+      button:hover { background: #f8fafc; }
+      button.danger { border-color: #f87171; color: #b91c1c; }
+      .log {
+        font-family: ui-monospace, monospace; font-size: 0.8rem;
+        background: #0f172a; color: #e2e8f0; padding: 1rem; border-radius: 8px;
+        max-height: 12rem; overflow-y: auto; white-space: pre-wrap;
+      }
+      .note {
+        font-size: 0.875rem; color: #475569; max-width: 48rem; margin-top: 1rem;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Acme Co. — Loader Script Demo</h1>
+    <p>
+      This page embeds the support chat widget using the distributable
+      <code>/widget-loader.js</code> — the same pattern a real client site
+      would use. The loader is served from the widget host itself and creates
+      a sandboxed iframe, launcher button, and responsive mobile mode
+      automatically.
+    </p>
+
+    <div class="controls">
+      <button type="button" onclick="SupportChat.open()">Open (API)</button>
+      <button type="button" onclick="SupportChat.close()">Close (API)</button>
+      <button type="button" onclick="SupportChat.toggle()">Toggle (API)</button>
+      <button type="button" class="danger" onclick="simulateForeignMessage()">
+        Simulate foreign-origin postMessage (should be ignored)
+      </button>
+    </div>
+
+    <div class="log" id="event-log">Waiting for postMessage events…</div>
+
+    <p class="note">
+      <strong>Verification checklist:</strong>
+      (1) iframe has <code>sandbox="allow-scripts allow-same-origin allow-forms allow-popups"</code>,
+      <code>allow="clipboard-write"</code>, and a <code>src</code> ending in <code>/widget?tenant=default</code>.
+      (2) Launcher button (bottom-right) opens/closes the iframe.
+      (3) Clicking the widget's internal close button (header ✕) posts a <code>close</code>
+      message that hides the iframe and restores the launcher.
+      (4) "Simulate foreign-origin postMessage" dispatches a forged message from a
+      different origin — the loader's origin guard must ignore it.
+      (5) Below 768px viewport the iframe expands full-screen with a close overlay.
+      (6) <code>curl -sI http://localhost:3000/widget</code> shows
+      <code>Content-Security-Policy: frame-ancestors 'self' http://localhost:3000</code>.
+    </p>
+
+    <!-- The loader script: in production this would come from the widget
+         host (https://<widget-host>/widget-loader.js). Served from the
+         same origin here so the demo works locally. -->
+    <script src="/widget-loader.js"></script>
+
+    <script>
+      var logEl = document.getElementById("event-log");
+      function log(line) {
+        logEl.textContent += "\n" + new Date().toLocaleTimeString() + " — " + line;
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      // Observe all postMessage events to verify the protocol in action.
+      window.addEventListener("message", function (e) {
+        log("message from " + e.origin + ": " + JSON.stringify(e.data));
+      });
+
+      // This is the key security check the demo proves: dispatching a
+      // MessageEvent with an origin the loader doesn't recognize MUST be
+      // ignored — the widget must not close.
+      function simulateForeignMessage() {
+        log("Dispatching forged 'close' from http://evil.example.com …");
+        window.dispatchEvent(
+          new MessageEvent("message", {
+            origin: "http://evil.example.com",
+            data: { source: "support-chat-widget", type: "close" },
+          })
+        );
+        log("Forged message dispatched. The widget should still be open if it was.");
+      }
+    </script>
+  </body>
+</html>

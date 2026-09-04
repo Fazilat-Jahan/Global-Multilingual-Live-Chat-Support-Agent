@@ -7,7 +7,43 @@ on:
     branches: [main]
 
 jobs:
-  backend:
+  # ── Spec 22.1 Job 1: lint ──────────────────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff check
+        run: ruff check backend/
+
+      - name: Ruff format check
+        run: ruff format --check backend/
+
+  # ── Spec 22.1 Job 2: typecheck ─────────────────────────────────────────
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Pyright
+        run: pyright backend/
+
+  # ── Spec 22.1 Job 3: test ──────────────────────────────────────────────
+  test:
     runs-on: ubuntu-latest
 
     services:
@@ -49,6 +85,7 @@ jobs:
       GEMINI_MODEL_NAME: gemini-flash-latest
       GEMINI_EMBEDDING_MODEL: gemini-embedding-001
       TENANT_ID: default
+      ADMIN_API_KEY: ci-test-key
 
     steps:
       - uses: actions/checkout@v4
@@ -60,9 +97,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
 
-      - name: Lint (ruff)
-        run: ruff check .
-
       - name: Wait for Qdrant
         run: |
           for i in $(seq 1 20); do
@@ -71,15 +105,37 @@ jobs:
           done
           echo "Qdrant did not become ready in time" && exit 1
 
-      - name: Create database schema
-        run: python -m backend.scripts.init_db
+      # Spec 6.2: CI runs alembic upgrade head against the test database
+      # before integration tests, replacing the old init_db script.
+      - name: Run database migrations (Alembic)
+        run: |
+          cd backend
+          alembic upgrade head
 
       - name: Ingest knowledge base (for RAG retrieval tests)
-        run: python -m backend.rag.ingestion
+        run: python -m backend.rag.ingestion --mode full
 
-      - name: Run tests
-        run: pytest backend/tests/ -v
+      # Spec 22.1: unit + guardrail tests with coverage gate (80% minimum).
+      # Guardrail tests exercise pure pattern-matching logic (no LLM) and
+      # are measured alongside unit tests for the coverage calculation.
+      - name: Unit tests (with coverage)
+        run: pytest backend/tests/unit/ backend/tests/guardrails/ -v --cov --cov-report=term-missing --cov-fail-under=80
 
+      # Integration + guardrails + agents tests (no coverage gate — many
+      # require live LLM quota which is rate-limited on the free tier).
+      - name: Integration tests
+        run: pytest backend/tests/integration/ -v
+
+      - name: Guardrail tests
+        run: pytest backend/tests/guardrails/ -v
+
+      - name: Agent tests
+        run: pytest backend/tests/agents/ -v
+
+      - name: RAG retrieval tests
+        run: pytest backend/tests/rag/ -v
+
+  # ── Spec 22.1 Job 4: frontend ──────────────────────────────────────────
   frontend:
     runs-on: ubuntu-latest
     defaults:
@@ -103,3 +159,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  # ── Spec 22.1 Job 5: security ──────────────────────────────────────────
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: pip-audit (dependency vulnerability scan)
+        run: pip-audit
