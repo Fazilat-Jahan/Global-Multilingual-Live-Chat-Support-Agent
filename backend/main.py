@@ -1,14 +1,30 @@
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.admin import router as admin_router
-from backend.api.health import router as health_router
-from backend.api.tickets import router as tickets_router
 from backend.config import get_settings
-from backend.middleware.origin_policy import OriginPolicyMiddleware
-from backend.websocket.handler import router as websocket_router
 
 settings = get_settings()
+
+# Applied before importing anything else in backend/ so every module-level
+# `logging.getLogger(__name__)` call picks up this configuration. Without
+# this, the root logger has no handler and Python's own default behavior
+# only prints WARNING-and-above via the "handler of last resort" — every
+# `logger.info(...)` trace added along the message-handling pipeline (spec
+# 8: message received -> triage -> agent processing -> response sent) would
+# be silently dropped, making failures that don't raise an exception (e.g. a
+# dependency hanging) look identical to nothing happening at all.
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+from backend.api.admin import router as admin_router  # noqa: E402
+from backend.api.health import router as health_router  # noqa: E402
+from backend.api.tickets import router as tickets_router  # noqa: E402
+from backend.middleware.origin_policy import OriginPolicyMiddleware  # noqa: E402
+from backend.websocket.handler import router as websocket_router  # noqa: E402
 
 app = FastAPI(title="Global Multilingual Live Chat Support Agent")
 

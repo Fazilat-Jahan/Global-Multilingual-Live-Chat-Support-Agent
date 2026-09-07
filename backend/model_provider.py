@@ -20,10 +20,15 @@ GEMINI_API_KEY = settings.gemini_api_key
 MODEL_NAME = settings.gemini_model_name
 
 # Gemini has no native OpenAI platform key, so it's accessed through its
-# OpenAI-compatible endpoint.
+# OpenAI-compatible endpoint. An explicit timeout bounds how long a turn can
+# hang if the network path to Gemini stalls (egress issue, black-holed
+# connection) rather than failing fast with an HTTP error — the OpenAI SDK's
+# default timeout is 10 minutes, far longer than a chat turn should ever
+# wait, and a hang here produces no exception and nothing in the logs.
 external_client = AsyncOpenAI(
     api_key=GEMINI_API_KEY,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+    timeout=30.0,
 )
 
 # Gemini's compatibility layer only supports Chat Completions, not the

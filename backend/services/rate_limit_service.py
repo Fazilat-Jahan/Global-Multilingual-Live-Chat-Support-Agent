@@ -18,9 +18,21 @@ settings = get_settings()
 # tenants.
 _KEY_PREFIX = f"{settings.tenant_id}:ratelimit:"
 
+# A misconfigured/unreachable REDIS_URL must fail fast with a raised
+# exception the caller can catch and log — not hang this check (run on every
+# inbound message, before any agent processing) indefinitely with no
+# timeout, which would silently stall every turn with nothing in the logs.
+_REDIS_CONNECT_TIMEOUT_SECONDS = 5.0
+_REDIS_SOCKET_TIMEOUT_SECONDS = 5.0
+
 
 def _client() -> Redis:
-    return Redis.from_url(settings.redis_url, decode_responses=True)
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
 
 
 async def check_and_increment(key: str, limit: int, window_seconds: int = 60) -> bool:

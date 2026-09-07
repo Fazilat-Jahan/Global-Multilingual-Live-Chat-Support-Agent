@@ -15,9 +15,21 @@ SESSION_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
 # shared Redis instance can't cross-contaminate sessions between tenants.
 _SESSION_KEY_PREFIX = f"{settings.tenant_id}:session:conversation_id:"
 
+# A misconfigured/unreachable REDIS_URL (wrong host, blocked egress, TLS
+# mismatch) must fail fast with a raised exception the caller can catch and
+# log — not hang the connection/command indefinitely with no timeout, which
+# would silently stall the whole turn with nothing in the logs.
+_REDIS_CONNECT_TIMEOUT_SECONDS = 5.0
+_REDIS_SOCKET_TIMEOUT_SECONDS = 5.0
+
 
 def _client() -> Redis:
-    return Redis.from_url(settings.redis_url, decode_responses=True)
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
 
 
 async def cache_conversation_id(session_id: str, conversation_id: str) -> None:

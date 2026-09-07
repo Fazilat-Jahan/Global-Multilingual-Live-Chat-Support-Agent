@@ -9,6 +9,7 @@ agent last responded — so a reconnect continues the same conversation
 coherently instead of starting over.
 """
 
+import logging
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -26,6 +27,8 @@ from backend.guardrails.context import SupportContext
 from backend.guardrails.runner import StreamEvent, TurnOutcome, run_turn, stream_turn
 from backend.guardrails.security import detect_language, mask_emails
 from backend.services import session_service, verification_service
+
+logger = logging.getLogger(__name__)
 
 _AGENT_REGISTRY: dict[str, Agent] = {
     triage_agent.name: triage_agent,
@@ -48,8 +51,10 @@ async def load_or_create(session_id: str, customer_id: str | None = None) -> Con
     # indexed session_id) is always the fallback and the source of truth —
     # a cache miss, a stale/evicted entry, or Redis being down all just fall
     # through to it, never silently lose data.
+    logger.info("Loading conversation for session %s (checking Redis cache)", session_id)
     cached_conversation_id = await session_service.get_cached_conversation_id(session_id)
 
+    logger.info("Loading conversation for session %s (querying Postgres)", session_id)
     async with AsyncSessionLocal() as db:
         conversation = None
         if cached_conversation_id:
@@ -66,6 +71,13 @@ async def load_or_create(session_id: str, customer_id: str | None = None) -> Con
     )
 
     await session_service.cache_conversation_id(session_id, str(conversation.id))
+    logger.info(
+        "Conversation %s loaded for session %s (resume_agent=%s, history_length=%d)",
+        conversation.id,
+        session_id,
+        resume_agent.name,
+        len(input_history),
+    )
     return ConversationSession(conversation=conversation, resume_agent=resume_agent, input_history=input_history)
 
 
@@ -73,11 +85,13 @@ async def _build_support_context(session_id: str, customer_id: str | None, conve
     """SupportContext for a new turn, seeded with the session's spec 4.1
     verified-customer set so protected tools' guardrails can enforce
     verification without a Redis round trip per tool call."""
+    logger.info("Building support context for session %s (checking verified-customer set)", session_id)
+    verified_customer_ids = await verification_service.get_verified_customer_ids(session_id)
     return SupportContext(
         session_id=session_id,
         customer_id=customer_id,
         conversation_id=conversation_id,
-        verified_customer_ids=await verification_service.get_verified_customer_ids(session_id),
+        verified_customer_ids=verified_customer_ids,
     )
 
 
@@ -139,6 +153,7 @@ async def stream_message(
     session = await load_or_create(session_id, customer_id)
     support_context = await _build_support_context(session_id, customer_id, str(session.conversation.id))
 
+    logger.info("Handing off to agent runner for session %s (agent=%s)", session_id, session.resume_agent.name)
     outcome: TurnOutcome | None = None
     async for event in stream_turn(session.resume_agent, user_message, support_context, history=session.input_history):
         if event.kind == "outcome":
@@ -146,4 +161,10 @@ async def stream_message(
         yield event
 
     if outcome is not None:
+        logger.info(
+            "Persisting turn for session %s (final_agent=%s, blocked=%s)",
+            session_id,
+            outcome.final_agent.name,
+            outcome.blocked,
+        )
         await record_turn(session.conversation, user_message, outcome)

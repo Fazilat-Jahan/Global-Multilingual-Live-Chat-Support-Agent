@@ -46,6 +46,13 @@ MAX_FAILURES_BEFORE_ESCALATION = 3
 # Verification state lasts as long as the session cache (24h).
 VERIFIED_STATE_TTL_SECONDS = 60 * 60 * 24
 
+# A misconfigured/unreachable REDIS_URL must fail fast with a raised
+# exception (caught below and mapped to SERVICE_UNAVAILABLE / fail-closed) —
+# not hang indefinitely with no timeout, which would silently stall the turn
+# with nothing in the logs.
+_REDIS_CONNECT_TIMEOUT_SECONDS = 5.0
+_REDIS_SOCKET_TIMEOUT_SECONDS = 5.0
+
 
 class VerificationStatus(str, enum.Enum):
     VERIFIED = "verified"
@@ -64,7 +71,12 @@ class VerificationResult:
 
 
 def _client() -> Redis:
-    return Redis.from_url(settings.redis_url, decode_responses=True)
+    return Redis.from_url(
+        settings.redis_url,
+        decode_responses=True,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
 
 
 async def get_verified_customer_ids(session_id: str) -> set[str]:

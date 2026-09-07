@@ -43,18 +43,55 @@ router = APIRouter()
 async def _forward_turn(websocket: WebSocket, session_id: str, content: str, queue) -> None:
     """Stream one message turn, checking the cancel flag after every event.
     Returns True if the turn was cancelled, False if it completed normally."""
+    logger.info("Turn started for session %s (message_length=%d)", session_id, len(content))
+    event_count = 0
     try:
         async for event in stream_message(session_id, content):
+            event_count += 1
             if queue.cancel_requested:
+                logger.info("Turn cancelled for session %s after %d events", session_id, event_count)
                 return
             if event.kind == "outcome":
                 continue
             await websocket.send_json(build_event(event.kind, **event.payload))
+        logger.info("Turn completed for session %s (%d events streamed)", session_id, event_count)
     except Exception:
         # Never leak internals (traceback/keys/DB errors) to the client —
         # full detail goes to server logs only.
-        logger.exception("Unhandled error while streaming turn for session %s", session_id)
+        logger.exception(
+            "Unhandled error while streaming turn for session %s (after %d events)", session_id, event_count
+        )
         await websocket.send_json(build_event(ERROR, message=SAFE_ERROR_MESSAGE))
+
+
+async def _process_one_message(websocket: WebSocket, session_id: str, queue, content: str) -> None:
+    """Runs the rate-limit check and the turn for one dequeued message. Kept
+    in its own try/except so a failure here (e.g. a Redis outage/timeout on
+    the rate-limit check) is logged and reported to the client instead of
+    silently killing the background _process_queue task — which would leave
+    the client waiting forever with no response and no visible error."""
+    try:
+        # Rate-limit check at processing time (close enough to receive
+        # time for the fixed-window counter).
+        client_ip = websocket.client.host if websocket.client else None
+        logger.info("Checking rate limit for session %s", session_id)
+        allowed, reason = await rate_limit_service.check_session_and_ip(session_id, client_ip)
+        if not allowed:
+            logger.warning("Rate limit exceeded (%s) for session %s", reason, session_id)
+            await websocket.send_json(build_event(ERROR, message=RATE_LIMIT_MESSAGE))
+            return
+
+        queue.start_processing()
+        await _forward_turn(websocket, session_id, content, queue)
+
+        # If cancelled during streaming, send the acknowledgement.
+        if queue.cancel_requested:
+            await websocket.send_json(build_event(REQUEST_CANCELLED))
+    except Exception:
+        logger.exception("Unhandled error processing message for session %s", session_id)
+        await websocket.send_json(build_event(ERROR, message=SAFE_ERROR_MESSAGE))
+    finally:
+        queue.reset_processing()
 
 
 async def _process_queue(websocket: WebSocket, session_id: str, queue) -> None:
@@ -71,27 +108,15 @@ async def _process_queue(websocket: WebSocket, session_id: str, queue) -> None:
             if msg is None:
                 continue
 
-            # Rate-limit check at processing time (close enough to receive
-            # time for the fixed-window counter).
-            client_ip = websocket.client.host if websocket.client else None
-            allowed, reason = await rate_limit_service.check_session_and_ip(session_id, client_ip)
-            if not allowed:
-                logger.warning("Rate limit exceeded (%s) for session %s", reason, session_id)
-                await websocket.send_json(build_event(ERROR, message=RATE_LIMIT_MESSAGE))
-                queue.reset_processing()
-                continue
-
-            queue.start_processing()
-
-            await _forward_turn(websocket, session_id, msg.content, queue)
-
-            # If cancelled during streaming, send the acknowledgement.
-            if queue.cancel_requested:
-                await websocket.send_json(build_event(REQUEST_CANCELLED))
-
-            queue.reset_processing()
+            await _process_one_message(websocket, session_id, queue, msg.content)
     except WebSocketDisconnect:
         pass
+    except Exception:
+        # Last-resort guard: without this, any exception not already caught
+        # by _process_one_message would kill this background task silently
+        # (asyncio only logs "Task exception was never retrieved" — nothing
+        # is ever sent back to the client, which just hangs forever).
+        logger.exception("Message-processing loop crashed for session %s", session_id)
 
 
 @router.websocket("/ws/chat")
@@ -99,6 +124,7 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None) ->
     await websocket.accept()
 
     session_id = session_id or str(uuid.uuid4())
+    logger.info("WebSocket accepted for session %s", session_id)
     state = manager.register(session_id, websocket)
     queue = get_queue(session_id)
     heartbeat_task = asyncio.create_task(heartbeat_loop(state))
@@ -124,8 +150,15 @@ async def chat_websocket(websocket: WebSocket, session_id: str | None = None) ->
             if message_type == USER_MESSAGE:
                 message_id = data.get("message_id") or str(uuid.uuid4())
                 content = str(data.get("content") or "").strip()
+                logger.info(
+                    "Received user_message for session %s (message_id=%s, length=%d)",
+                    session_id,
+                    message_id,
+                    len(content),
+                )
 
                 if state.is_duplicate(message_id):
+                    logger.info("Duplicate message_id %s for session %s, ignoring", message_id, session_id)
                     continue
 
                 if not content:
