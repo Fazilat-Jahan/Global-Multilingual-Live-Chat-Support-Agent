@@ -20,6 +20,14 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+# Temporary deploy-verification marker (spec debugging aid, not permanent):
+# printed unconditionally at import time, before any log-level filtering can
+# apply, so its presence/absence in Railway's logs after a deploy tells us
+# with certainty whether the deploy actually picked up this commit. Bump the
+# string on every commit that needs re-confirming, then remove once deploy
+# pipeline trust is restored.
+print("=== DEPLOY MARKER: v3-disconnect-task-reuse-fix-CONFIRM ===", flush=True)
+
 from backend.api.admin import router as admin_router  # noqa: E402
 from backend.api.health import router as health_router  # noqa: E402
 from backend.api.tickets import router as tickets_router  # noqa: E402
