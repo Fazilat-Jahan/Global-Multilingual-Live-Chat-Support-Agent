@@ -9,9 +9,8 @@ every chat message.
 
 import logging
 
-from redis.asyncio import Redis
-
 from backend.config import get_settings
+from backend.services.redis_client import get_redis_client
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -21,22 +20,6 @@ logger = logging.getLogger(__name__)
 # tenants.
 _KEY_PREFIX = f"{settings.tenant_id}:ratelimit:"
 
-# A misconfigured/unreachable REDIS_URL must fail fast with a raised
-# exception the caller can catch and log — not hang this check (run on every
-# inbound message, before any agent processing) indefinitely with no
-# timeout, which would silently stall every turn with nothing in the logs.
-_REDIS_CONNECT_TIMEOUT_SECONDS = 5.0
-_REDIS_SOCKET_TIMEOUT_SECONDS = 5.0
-
-
-def _client() -> Redis:
-    return Redis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
-        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
-    )
-
 
 async def check_and_increment(key: str, limit: int, window_seconds: int = 60) -> bool:
     """Returns True if this call is within the limit (and counts it towards
@@ -44,16 +27,13 @@ async def check_and_increment(key: str, limit: int, window_seconds: int = 60) ->
     current `window_seconds` window.
     """
     logger.info("Redis rate-limit check starting (key=%s)", key)
-    client = _client()
-    try:
-        redis_key = f"{_KEY_PREFIX}{key}"
-        count = await client.incr(redis_key)
-        if count == 1:
-            await client.expire(redis_key, window_seconds)
-        logger.info("Redis rate-limit check completed (key=%s, count=%d, limit=%d)", key, count, limit)
-        return count <= limit
-    finally:
-        await client.aclose()
+    client = get_redis_client()
+    redis_key = f"{_KEY_PREFIX}{key}"
+    count = await client.incr(redis_key)
+    if count == 1:
+        await client.expire(redis_key, window_seconds)
+    logger.info("Redis rate-limit check completed (key=%s, count=%d, limit=%d)", key, count, limit)
+    return count <= limit
 
 
 async def check_session_and_ip(session_id: str, client_ip: str | None) -> tuple[bool, str | None]:
