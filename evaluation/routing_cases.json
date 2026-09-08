@@ -28,5 +28,15 @@
     "id": "human_ar",
     "message": "أريد التحدث مع إنسان من فضلك",
     "expected_agent": "Escalation Agent"
+  },
+  {
+    "id": "greeting_en",
+    "message": "hi",
+    "expected_agent": "Triage Agent"
+  },
+  {
+    "id": "faq_blunt_en",
+    "message": "tell me privacy policy",
+    "expected_agent": "RAG Agent"
   }
 ]
