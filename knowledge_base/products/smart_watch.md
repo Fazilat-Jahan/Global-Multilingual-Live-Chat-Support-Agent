@@ -29,3 +29,7 @@ empty takes about 90 minutes using the included magnetic charging cable.
 PulseFit Smart Watch includes a 1-year limited warranty covering manufacturing
 defects. Screen damage from drops and battery degradation from normal use are
 not covered.
+
+## Price
+
+The PulseFit Smart Watch is available for $199.99 USD. It can be purchased online or at select retail stores.

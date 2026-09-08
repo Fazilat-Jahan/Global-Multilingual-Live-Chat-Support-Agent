@@ -29,3 +29,7 @@ damage outside the IPX4 rating, or normal wear and tear.
 The headphones work with any Bluetooth-enabled device, including phones,
 tablets, and laptops. A companion app is available for iOS and Android to
 customize equalizer settings and noise cancellation levels.
+
+## Price
+
+The AeroSound Wireless Headphones are available for $149.99 USD. They can be purchased online or at select retail stores.
