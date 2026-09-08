@@ -51,17 +51,27 @@ async def load_or_create(session_id: str, customer_id: str | None = None) -> Con
     # indexed session_id) is always the fallback and the source of truth —
     # a cache miss, a stale/evicted entry, or Redis being down all just fall
     # through to it, never silently lose data.
-    logger.info("Loading conversation for session %s (checking Redis cache)", session_id)
     cached_conversation_id = await session_service.get_cached_conversation_id(session_id)
 
-    logger.info("Loading conversation for session %s (querying Postgres)", session_id)
+    logger.info("Postgres session open starting (session=%s)", session_id)
     async with AsyncSessionLocal() as db:
+        logger.info("Postgres session open completed (session=%s)", session_id)
         conversation = None
         if cached_conversation_id:
+            logger.info("Postgres get_conversation_by_id starting (session=%s)", session_id)
             conversation = await repository.get_conversation_by_id(db, uuid.UUID(cached_conversation_id))
+            logger.info(
+                "Postgres get_conversation_by_id completed (session=%s, found=%s)",
+                session_id,
+                conversation is not None,
+            )
         if conversation is None:
+            logger.info("Postgres get_or_create_conversation starting (session=%s)", session_id)
             conversation = await repository.get_or_create_conversation(db, session_id, customer_id)
+            logger.info("Postgres get_or_create_conversation completed (session=%s)", session_id)
+        logger.info("Postgres get_messages starting (session=%s)", session_id)
         messages = await repository.get_messages(db, conversation.id)
+        logger.info("Postgres get_messages completed (session=%s, count=%d)", session_id, len(messages))
 
     input_history = [{"role": m.role, "content": m.content} for m in messages if m.role in ("user", "assistant")]
 
@@ -85,8 +95,8 @@ async def _build_support_context(session_id: str, customer_id: str | None, conve
     """SupportContext for a new turn, seeded with the session's spec 4.1
     verified-customer set so protected tools' guardrails can enforce
     verification without a Redis round trip per tool call."""
-    logger.info("Building support context for session %s (checking verified-customer set)", session_id)
     verified_customer_ids = await verification_service.get_verified_customer_ids(session_id)
+    logger.info("Support context built for session %s", session_id)
     return SupportContext(
         session_id=session_id,
         customer_id=customer_id,
@@ -96,11 +106,16 @@ async def _build_support_context(session_id: str, customer_id: str | None, conve
 
 
 async def record_turn(conversation: Conversation, user_message: str, outcome: TurnOutcome) -> None:
+    logger.info("record_turn starting (conversation=%s)", conversation.id)
     async with AsyncSessionLocal() as db:
         # Spec 4.1: the verification email is passed to the verification tool
         # live but never stored in durable conversation history — mask email
         # addresses out of both sides of the persisted turn.
+        logger.info("Postgres add_message (user) starting (conversation=%s)", conversation.id)
         await repository.add_message(db, conversation.id, role="user", content=mask_emails(user_message))
+        logger.info("Postgres add_message (user) completed (conversation=%s)", conversation.id)
+
+        logger.info("Postgres add_message (assistant) starting (conversation=%s)", conversation.id)
         await repository.add_message(
             db,
             conversation.id,
@@ -109,22 +124,31 @@ async def record_turn(conversation: Conversation, user_message: str, outcome: Tu
             agent=outcome.final_agent.name,
             metadata={"blocked": outcome.blocked, "block_reason": outcome.block_reason},
         )
+        logger.info("Postgres add_message (assistant) completed (conversation=%s)", conversation.id)
 
         if outcome.blocked:
+            logger.info("record_turn completed early (blocked, conversation=%s)", conversation.id)
             return
 
         detected_language = detect_language(user_message)
         if outcome.final_agent.name == escalation_agent.name:
+            logger.info("Postgres mark_escalated starting (conversation=%s)", conversation.id)
             await repository.mark_escalated(db, conversation.id)
+            logger.info("Postgres mark_escalated completed (conversation=%s)", conversation.id)
             if detected_language:
+                logger.info("Postgres update_conversation (language) starting (conversation=%s)", conversation.id)
                 await repository.update_conversation(db, conversation.id, detected_language=detected_language)
+                logger.info("Postgres update_conversation (language) completed (conversation=%s)", conversation.id)
         else:
+            logger.info("Postgres update_conversation starting (conversation=%s)", conversation.id)
             await repository.update_conversation(
                 db,
                 conversation.id,
                 status=ConversationStatus.WAITING_FOR_USER,
                 detected_language=detected_language,
             )
+            logger.info("Postgres update_conversation completed (conversation=%s)", conversation.id)
+    logger.info("record_turn completed (conversation=%s)", conversation.id)
 
 
 async def handle_message(
@@ -155,10 +179,14 @@ async def stream_message(
 
     logger.info("Handing off to agent runner for session %s (agent=%s)", session_id, session.resume_agent.name)
     outcome: TurnOutcome | None = None
+    event_count = 0
     async for event in stream_turn(session.resume_agent, user_message, support_context, history=session.input_history):
+        event_count += 1
+        logger.info("Agent runner event #%d for session %s: kind=%s", event_count, session_id, event.kind)
         if event.kind == "outcome":
             outcome = event.payload["outcome"]
         yield event
+    logger.info("Agent runner finished for session %s (%d events total)", session_id, event_count)
 
     if outcome is not None:
         logger.info(

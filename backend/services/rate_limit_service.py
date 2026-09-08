@@ -7,11 +7,14 @@ check (one INCR + a conditional EXPIRE), which matters since this runs on
 every chat message.
 """
 
+import logging
+
 from redis.asyncio import Redis
 
 from backend.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 # Phase 17 (spec 20.3): all Redis keys prefixed with {tenant_id}: so a
 # shared Redis instance can't cross-contaminate rate-limit counters between
@@ -40,12 +43,14 @@ async def check_and_increment(key: str, limit: int, window_seconds: int = 60) ->
     the window), False if the caller has exceeded `limit` calls within the
     current `window_seconds` window.
     """
+    logger.info("Redis rate-limit check starting (key=%s)", key)
     client = _client()
     try:
         redis_key = f"{_KEY_PREFIX}{key}"
         count = await client.incr(redis_key)
         if count == 1:
             await client.expire(redis_key, window_seconds)
+        logger.info("Redis rate-limit check completed (key=%s, count=%d, limit=%d)", key, count, limit)
         return count <= limit
     finally:
         await client.aclose()

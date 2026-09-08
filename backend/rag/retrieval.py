@@ -70,11 +70,14 @@ async def search(
     last_error: Exception | None = None
 
     for attempt in range(1, QDRANT_MAX_ATTEMPTS + 1):
+        logger.info("Qdrant search attempt %d/%d starting", attempt, QDRANT_MAX_ATTEMPTS)
         client = _get_client()
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 _search_once(client, query, top_k, score_threshold), timeout=QDRANT_TIMEOUT_SECONDS
             )
+            logger.info("Qdrant search attempt %d/%d completed (%d results)", attempt, QDRANT_MAX_ATTEMPTS, len(result))
+            return result
         except Exception as exc:  # deliberately broad: any Qdrant/network failure is retried the same way
             last_error = exc
             logger.warning("Qdrant search attempt %d/%d failed: %s", attempt, QDRANT_MAX_ATTEMPTS, exc)
@@ -88,10 +91,17 @@ async def search(
 async def _search_once(
     client: AsyncQdrantClient, query: str, top_k: int, score_threshold: float
 ) -> list[RetrievedChunk]:
-    if not await client.collection_exists(COLLECTION_NAME):
+    logger.info("Qdrant collection_exists check starting")
+    exists = await client.collection_exists(COLLECTION_NAME)
+    logger.info("Qdrant collection_exists check completed (exists=%s)", exists)
+    if not exists:
         return []
 
+    logger.info("embed_query starting")
     query_vector = await embed_query(query)
+    logger.info("embed_query completed")
+
+    logger.info("Qdrant query_points starting")
     results = await client.query_points(
         collection_name=COLLECTION_NAME,
         query=query_vector,
@@ -99,6 +109,7 @@ async def _search_once(
         score_threshold=score_threshold,
         query_filter=Filter(must=[FieldCondition(key="tenant_id", match=MatchValue(value=settings.tenant_id))]),
     )
+    logger.info("Qdrant query_points completed (%d points)", len(results.points))
     return [
         RetrievedChunk(
             text=point.payload["text"],

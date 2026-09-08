@@ -83,9 +83,12 @@ async def get_verified_customer_ids(session_id: str) -> set[str]:
     """The customer_ids this session has verified. On a Redis outage, returns
     an empty set and lets the protected tools keep rejecting (fail closed) —
     a short outage just means re-verifying, never an access hole."""
+    logger.info("Redis SMEMBERS verified-customer set starting (session=%s)", session_id)
     client = _client()
     try:
-        return set(await client.smembers(f"{_VERIFIED_KEY_PREFIX}{session_id}"))
+        result = set(await client.smembers(f"{_VERIFIED_KEY_PREFIX}{session_id}"))
+        logger.info("Redis SMEMBERS verified-customer set completed (session=%s, count=%d)", session_id, len(result))
+        return result
     except Exception:
         logger.warning("Could not load verified customers for session %s", session_id, exc_info=True)
         return set()
@@ -94,11 +97,13 @@ async def get_verified_customer_ids(session_id: str) -> set[str]:
 
 
 async def mark_customer_verified(session_id: str, customer_id: str) -> None:
+    logger.info("Redis SADD verified-customer starting (session=%s)", session_id)
     client = _client()
     try:
         key = f"{_VERIFIED_KEY_PREFIX}{session_id}"
         await client.sadd(key, customer_id)
         await client.expire(key, VERIFIED_STATE_TTL_SECONDS)
+        logger.info("Redis SADD verified-customer completed (session=%s)", session_id)
     finally:
         await client.aclose()
 
@@ -109,12 +114,19 @@ async def verify_customer_for_session(session_id: str, order_id: str, email: str
     to a structured result the tool layer turns into a safe message."""
     trace_id = str(uuid.uuid4())
 
+    logger.info("Redis verification rate-limit check starting (trace_id=%s, session_id=%s)", trace_id, session_id)
     client = _client()
     try:
         attempts_key = f"{_ATTEMPTS_KEY_PREFIX}{session_id}"
         attempts = await client.incr(attempts_key)
         if attempts == 1:
             await client.expire(attempts_key, ATTEMPT_WINDOW_SECONDS)
+        logger.info(
+            "Redis verification rate-limit check completed (trace_id=%s, session_id=%s, attempts=%d)",
+            trace_id,
+            session_id,
+            attempts,
+        )
     except Exception:
         logger.exception("Verification rate-limit check failed (trace_id=%s, session_id=%s)", trace_id, session_id)
         return VerificationResult(VerificationStatus.SERVICE_UNAVAILABLE)
@@ -144,6 +156,7 @@ async def verify_customer_for_session(session_id: str, order_id: str, email: str
     # Failure (unknown order or mismatching email): count it and log it with
     # the trace_id — but never log the credential itself.
     failure_count = 0
+    logger.info("Redis verification failure-count increment starting (trace_id=%s)", trace_id)
     try:
         client = _client()
         try:
@@ -151,6 +164,11 @@ async def verify_customer_for_session(session_id: str, order_id: str, email: str
             failure_count = await client.incr(failures_key)
             if failure_count == 1:
                 await client.expire(failures_key, VERIFIED_STATE_TTL_SECONDS)
+            logger.info(
+                "Redis verification failure-count increment completed (trace_id=%s, failure_count=%d)",
+                trace_id,
+                failure_count,
+            )
         finally:
             await client.aclose()
     except Exception:

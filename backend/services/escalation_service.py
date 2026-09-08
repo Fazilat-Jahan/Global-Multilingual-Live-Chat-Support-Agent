@@ -41,6 +41,7 @@ async def create_ticket(
 ) -> str:
     """Persists a new support ticket and returns its human-readable ticket_id."""
     ticket_id = f"TCK-{uuid.uuid4().hex[:8].upper()}"
+    logger.info("Postgres create_ticket starting (ticket_id=%s)", ticket_id)
     async with AsyncSessionLocal() as db:
         await repository.create_ticket(
             db,
@@ -51,6 +52,7 @@ async def create_ticket(
             priority=priority,
             customer_reference=customer_reference,
         )
+    logger.info("Postgres create_ticket completed (ticket_id=%s)", ticket_id)
     return ticket_id
 
 
@@ -76,8 +78,10 @@ async def send_email_notification(ticket_id: str, summary: str, priority: str, r
         return False
 
     for attempt in range(1, _NOTIFY_MAX_ATTEMPTS + 1):
+        logger.info("SMTP send attempt %d/%d starting (ticket_id=%s)", attempt, _NOTIFY_MAX_ATTEMPTS, ticket_id)
         try:
             await asyncio.to_thread(_send_email_sync, ticket_id, summary, priority, reason)
+            logger.info("SMTP send attempt %d/%d completed (ticket_id=%s)", attempt, _NOTIFY_MAX_ATTEMPTS, ticket_id)
             return True
         except Exception:
             logger.exception(
@@ -104,10 +108,14 @@ async def send_slack_notification(ticket_id: str, summary: str, priority: str, r
     }
 
     for attempt in range(1, _NOTIFY_MAX_ATTEMPTS + 1):
+        logger.info("Slack webhook attempt %d/%d starting (ticket_id=%s)", attempt, _NOTIFY_MAX_ATTEMPTS, ticket_id)
         try:
             async with httpx.AsyncClient(timeout=10) as client:
                 response = await client.post(settings.slack_webhook_url, json=payload)
                 response.raise_for_status()
+            logger.info(
+                "Slack webhook attempt %d/%d completed (ticket_id=%s)", attempt, _NOTIFY_MAX_ATTEMPTS, ticket_id
+            )
             return True
         except Exception:
             logger.exception(
@@ -127,8 +135,10 @@ async def notify_human_team(ticket_id: str, summary: str) -> str:
     and reflected only in the returned status string, never as an exception
     that could surface a traceback to the customer.
     """
+    logger.info("Postgres get_ticket_by_ticket_id starting (ticket_id=%s)", ticket_id)
     async with AsyncSessionLocal() as db:
         ticket = await repository.get_ticket_by_ticket_id(db, ticket_id)
+    logger.info("Postgres get_ticket_by_ticket_id completed (ticket_id=%s, found=%s)", ticket_id, ticket is not None)
 
     if ticket is None:
         logger.warning("notify_human_team called for unknown ticket_id %s", ticket_id)

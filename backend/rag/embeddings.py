@@ -1,8 +1,12 @@
+import logging
+
 from agents import AsyncOpenAI
 
 from backend.config import get_settings
+from backend.model_provider import build_traced_http_client
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 EMBEDDING_MODEL = settings.gemini_embedding_model
 EMBEDDING_DIMENSIONS = 3072
@@ -17,11 +21,13 @@ EMBEDDING_DIMENSIONS = 3072
 # doesn't unwind promptly on cancellation (e.g. a stalled connect on Gemini's
 # side), the customer-visible effect is the same silent multi-minute hang
 # this timeout is meant to prevent. Bounding the client itself closes that
-# gap instead of relying solely on the caller's cancellation.
+# gap instead of relying solely on the caller's cancellation. Uses the same
+# traced http_client as model_provider.py so a stalled embeddings call shows
+# up in logs as clearly as a stalled chat-completions call.
 _embedding_client = AsyncOpenAI(
     api_key=settings.gemini_api_key,
     base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-    timeout=15.0,
+    http_client=build_traced_http_client("gemini-embed", 15.0),
 )
 
 
@@ -34,7 +40,9 @@ async def embed_texts(texts: list[str]) -> list[list[float]]:
     """
     if not texts:
         return []
+    logger.info("Calling Gemini embeddings API (batch_size=%d)", len(texts))
     response = await _embedding_client.embeddings.create(model=EMBEDDING_MODEL, input=texts)
+    logger.info("Gemini embeddings API call completed (batch_size=%d)", len(texts))
     return [item.embedding for item in response.data]
 
 

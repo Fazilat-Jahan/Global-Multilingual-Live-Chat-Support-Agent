@@ -4,11 +4,14 @@ conversation_service falls back to the Postgres session_id lookup and
 repopulates the cache. Also the home for rate-limit state in Phase 8.
 """
 
+import logging
+
 from redis.asyncio import Redis
 
 from backend.config import get_settings
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 SESSION_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
 # Phase 17 (spec 20.3): all Redis keys prefixed with {tenant_id}: so a
@@ -33,16 +36,21 @@ def _client() -> Redis:
 
 
 async def cache_conversation_id(session_id: str, conversation_id: str) -> None:
+    logger.info("Redis SET session cache starting (session=%s)", session_id)
     client = _client()
     try:
         await client.set(f"{_SESSION_KEY_PREFIX}{session_id}", conversation_id, ex=SESSION_CACHE_TTL_SECONDS)
+        logger.info("Redis SET session cache completed (session=%s)", session_id)
     finally:
         await client.aclose()
 
 
 async def get_cached_conversation_id(session_id: str) -> str | None:
+    logger.info("Redis GET session cache starting (session=%s)", session_id)
     client = _client()
     try:
-        return await client.get(f"{_SESSION_KEY_PREFIX}{session_id}")
+        value = await client.get(f"{_SESSION_KEY_PREFIX}{session_id}")
+        logger.info("Redis GET session cache completed (session=%s, hit=%s)", session_id, value is not None)
+        return value
     finally:
         await client.aclose()

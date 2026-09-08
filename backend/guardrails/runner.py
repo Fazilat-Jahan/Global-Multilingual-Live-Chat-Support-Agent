@@ -66,10 +66,13 @@ async def _continue_incomplete_output(
             ),
         },
     ]
+    logger.info("Runner.run (continuation) starting for session %s", context.session_id)
     try:
         result = await Runner.run(agent, conversation, context=context, run_config=DEFAULT_RUN_CONFIG)
     except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
+        logger.info("Runner.run (continuation) blocked by guardrail for session %s", context.session_id)
         return None
+    logger.info("Runner.run (continuation) completed for session %s", context.session_id)
     continuation = result.final_output if isinstance(result.final_output, str) else str(result.final_output)
     return continuation.strip() or None
 
@@ -100,8 +103,10 @@ async def continue_turn(previous_result: RunResult, message: str, context: Suppo
 async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> TurnOutcome:
     context.latest_user_message = input if isinstance(input, str) else _last_user_text(input)
 
+    logger.info("Runner.run starting for session %s (agent=%s)", context.session_id, agent.name)
     try:
         result = await Runner.run(agent, input, context=context, run_config=DEFAULT_RUN_CONFIG)
+        logger.info("Runner.run completed for session %s (agent=%s)", context.session_id, agent.name)
     except InputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
         safe_message = info.get("safe_message", SAFE_BLOCKED_MESSAGE)
@@ -141,10 +146,13 @@ async def _retry_for_language(agent: Agent, input, context: SupportContext, expe
             ),
         }
     ]
+    logger.info("Runner.run (language retry) starting for session %s", context.session_id)
     try:
         result = await Runner.run(agent, corrective_input, context=context, run_config=DEFAULT_RUN_CONFIG)
     except (InputGuardrailTripwireTriggered, OutputGuardrailTripwireTriggered):
+        logger.info("Runner.run (language retry) blocked by guardrail for session %s", context.session_id)
         return None
+    logger.info("Runner.run (language retry) completed for session %s", context.session_id)
     return TurnOutcome(result.last_agent, result.final_output, False, None, result)
 
 
@@ -186,9 +194,19 @@ async def stream_turn(
 
     pending_tool_calls: dict[str, str] = {}
 
+    logger.info("Runner.run_streamed starting for session %s (agent=%s)", context.session_id, agent.name)
     try:
         result = Runner.run_streamed(agent, input, context=context, run_config=DEFAULT_RUN_CONFIG)
+        logger.info("Runner.run_streamed object created for session %s; awaiting stream_events()", context.session_id)
+        sdk_event_count = 0
         async for event in result.stream_events():
+            sdk_event_count += 1
+            logger.info(
+                "SDK stream_events() yielded event #%d for session %s: %s",
+                sdk_event_count,
+                context.session_id,
+                type(event).__name__,
+            )
             if isinstance(event, AgentUpdatedStreamEvent):
                 new_name = event.new_agent.name
                 if new_name != current_agent_name:
@@ -201,11 +219,13 @@ async def stream_turn(
                     call_id = getattr(event.item, "call_id", None)
                     if call_id:
                         pending_tool_calls[call_id] = tool_name
+                    logger.info("Tool call starting for session %s: %s", context.session_id, tool_name)
                     yield StreamEvent("tool_started", {"tool": tool_name, "agent": current_agent_name})
                 elif event.name == "tool_output":
                     call_id = getattr(event.item, "call_id", None)
                     tool_name = pending_tool_calls.pop(call_id, "tool") if call_id else "tool"
                     output = getattr(event.item, "output", "")
+                    logger.info("Tool call completed for session %s: %s", context.session_id, tool_name)
                     yield StreamEvent(
                         "tool_completed",
                         {"tool": tool_name, "agent": current_agent_name, "result": str(output)[:500]},
@@ -215,6 +235,10 @@ async def stream_turn(
                 data = event.data
                 if getattr(data, "type", None) == "response.output_text.delta":
                     yield StreamEvent("response_delta", {"delta": data.delta, "agent": current_agent_name})
+
+        logger.info(
+            "SDK stream_events() exhausted normally for session %s (%d events)", context.session_id, sdk_event_count
+        )
 
     except InputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
