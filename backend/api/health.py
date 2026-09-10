@@ -7,6 +7,7 @@ reaches an external response).
 
 import asyncio
 import logging
+import time
 
 import httpx
 from fastapi import APIRouter, Response
@@ -20,6 +21,12 @@ from backend.db.connection import AsyncSessionLocal
 logger = logging.getLogger(__name__)
 router = APIRouter()
 settings = get_settings()
+
+# Spec 15.1's exact health response includes "version" (pyproject.toml's
+# current version — update alongside it) and "uptime" (seconds since this
+# process started, i.e. since this module was first imported).
+_APP_VERSION = "0.1.0"
+_PROCESS_START_TIME = time.monotonic()
 
 # A cold connection pool's first handshake to a managed cloud Postgres
 # instance (TLS + auth) can genuinely take several seconds — a Phase 10
@@ -39,13 +46,17 @@ async def _check_database() -> str:
 
 
 async def _check_redis() -> str:
+    """Reports "degraded", not "down", on failure: spec 11.2 — sessions and
+    rate limiting fall back to an in-memory store when Redis is unreachable
+    (backend.services.session_service, backend.services.rate_limit_service),
+    so a Redis outage degrades the service rather than taking it down."""
     client = Redis.from_url(settings.redis_url, decode_responses=True)
     try:
         await asyncio.wait_for(client.ping(), timeout=_CHECK_TIMEOUT_SECONDS)
         return "ok"
     except Exception:
-        logger.exception("Health check: redis unreachable")
-        return "down"
+        logger.warning("Health check: redis unreachable, degraded (in-memory fallback active)", exc_info=True)
+        return "degraded"
     finally:
         await client.aclose()
 
@@ -89,16 +100,23 @@ async def _check_model_provider() -> str:
 
 @router.get("/health")
 async def health(response: Response) -> dict:
-    database, redis, qdrant, model_provider = await asyncio.gather(
+    # Spec 15.1 key names: "postgres" and "llm" (not this module's internal
+    # "database"/"model_provider" naming).
+    postgres, redis, qdrant, llm = await asyncio.gather(
         _check_database(), _check_redis(), _check_qdrant(), _check_model_provider()
     )
     dependencies = {
-        "database": database,
+        "postgres": postgres,
         "redis": redis,
         "qdrant": qdrant,
-        "model_provider": model_provider,
+        "llm": llm,
     }
     overall = "ok" if all(status in ("ok", "degraded") for status in dependencies.values()) else "down"
     if overall != "ok":
         response.status_code = 503
-    return {"status": overall, "dependencies": dependencies}
+    return {
+        "status": overall,
+        "version": _APP_VERSION,
+        "uptime": round(time.monotonic() - _PROCESS_START_TIME),
+        "dependencies": dependencies,
+    }

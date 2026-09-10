@@ -23,7 +23,10 @@ async def test_health_reports_all_dependencies():
 
     body = response.json()
     assert "status" in body
-    assert set(body["dependencies"].keys()) == {"database", "redis", "qdrant", "model_provider"}
+    # Spec 15.1's exact key names.
+    assert body["version"]
+    assert isinstance(body["uptime"], int)
+    assert set(body["dependencies"].keys()) == {"postgres", "redis", "qdrant", "llm"}
     for status in body["dependencies"].values():
         assert status in ("ok", "degraded", "down")
 

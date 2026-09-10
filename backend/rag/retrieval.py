@@ -6,6 +6,7 @@ from qdrant_client import AsyncQdrantClient
 from qdrant_client.models import FieldCondition, Filter, MatchValue
 
 from backend.config import get_settings
+from backend.observability import metrics
 from backend.rag.embeddings import embed_query
 from backend.rag.ingestion import COLLECTION_NAME
 
@@ -110,6 +111,11 @@ async def _search_once(
         query_filter=Filter(must=[FieldCondition(key="tenant_id", match=MatchValue(value=settings.tenant_id))]),
     )
     logger.info("Qdrant query_points completed (%d points)", len(results.points))
+    if results.points:
+        # Spec 15.1: rag_retrieval_score tracks the top (best) match per
+        # query — a single representative signal per retrieval, not every
+        # chunk's score.
+        metrics.rag_retrieval_score.observe(results.points[0].score)
     return [
         RetrievedChunk(
             text=point.payload["text"],

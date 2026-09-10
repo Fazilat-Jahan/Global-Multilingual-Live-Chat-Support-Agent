@@ -11,7 +11,10 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from backend.config import get_settings
+from backend.db import repository
+from backend.db.connection import AsyncSessionLocal
 from backend.rag.ingestion import ingest
+from backend.services.retention_service import delete_conversation_data
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -80,3 +83,32 @@ async def reingest(body: ReingestRequest, authorization: str | None = Header(def
         duration_seconds=result.duration_seconds,
         errors=result.errors,
     )
+
+
+class DataDeletionRequest(BaseModel):
+    session_id: str
+
+
+class DataDeletionResponse(BaseModel):
+    messages_deleted: int
+    tickets_updated: int
+
+
+@router.post("/data-deletion", response_model=DataDeletionResponse)
+async def data_deletion(
+    body: DataDeletionRequest, authorization: str | None = Header(default=None)
+) -> DataDeletionResponse:
+    """Spec 16.1 data-deletion request: deletes all conversation content for
+    one session_id and nullifies PII on its tickets. Processed synchronously
+    and immediately — well within the spec's 72-hour SLA. 404 if session_id
+    has no conversation.
+    """
+    _require_admin(authorization)
+
+    async with AsyncSessionLocal() as db:
+        conversation = await repository.get_conversation_by_session_id(db, body.session_id)
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="No conversation found for that session_id")
+
+    result = await delete_conversation_data(conversation.id)
+    return DataDeletionResponse(**result)

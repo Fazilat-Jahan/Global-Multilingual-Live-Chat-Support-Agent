@@ -16,7 +16,7 @@ VERSIONS_DIR = MIGRATIONS_DIR / "versions"
 ENV_PY = MIGRATIONS_DIR / "env.py"
 SCRIPT_MAKO = MIGRATIONS_DIR / "script.py.mako"
 
-BASELINE_REVISION = "903a7a279ae3"
+BASELINE_REVISION = "c823c17d759f"
 
 
 def _alembic(*args: str) -> subprocess.CompletedProcess[str]:

@@ -31,7 +31,14 @@ from agents import (
 
 from backend.guardrails.context import SupportContext
 from backend.guardrails.security import SAFE_BLOCKED_MESSAGE, SAFE_ERROR_MESSAGE
-from backend.model_provider import DEFAULT_RUN_CONFIG
+from backend.model_provider import (
+    DEFAULT_RUN_CONFIG,
+    DEGRADED_MESSAGE,
+    is_circuit_open,
+    record_llm_failure,
+    record_llm_success,
+)
+from backend.observability import metrics
 
 logger = logging.getLogger(__name__)
 
@@ -103,10 +110,17 @@ async def continue_turn(previous_result: RunResult, message: str, context: Suppo
 async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> TurnOutcome:
     context.latest_user_message = input if isinstance(input, str) else _last_user_text(input)
 
+    # Spec 6.1.1 circuit breaker — see stream_turn() for the full rationale;
+    # this is the same check for the CLI-harness path (run_turn/continue_turn).
+    if is_circuit_open():
+        logger.warning("Circuit breaker open for session %s — skipping LLM call", context.session_id)
+        return TurnOutcome(agent, DEGRADED_MESSAGE, True, "circuit_open", None)
+
     logger.info("Runner.run starting for session %s (agent=%s)", context.session_id, agent.name)
     try:
         result = await Runner.run(agent, input, context=context, run_config=DEFAULT_RUN_CONFIG)
         logger.info("Runner.run completed for session %s (agent=%s)", context.session_id, agent.name)
+        record_llm_success()
     except InputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
         safe_message = info.get("safe_message", SAFE_BLOCKED_MESSAGE)
@@ -123,6 +137,7 @@ async def _run_turn_with_input(agent: Agent, input, context: SupportContext) -> 
         return TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, reason, None)
     except Exception:
         logger.exception("Unhandled error during agent turn for session %s", context.session_id)
+        record_llm_failure()
         return TurnOutcome(agent, SAFE_ERROR_MESSAGE, True, "internal_error", None)
 
     final_text = result.final_output
@@ -192,6 +207,20 @@ async def stream_turn(
     current_agent_name = agent.name
     yield StreamEvent("agent_started", {"agent": current_agent_name})
 
+    # Spec 6.1.1: circuit breaker — fails fast without calling the LLM at
+    # all while open, rather than letting every turn during a sustained
+    # Gemini outage burn its own full retry sequence against a
+    # already-struggling endpoint.
+    if is_circuit_open():
+        logger.warning("Circuit breaker open for session %s — skipping LLM call", context.session_id)
+        yield StreamEvent("response_delta", {"delta": DEGRADED_MESSAGE, "agent": current_agent_name})
+        yield StreamEvent("response_completed", {"agent": current_agent_name, "text": DEGRADED_MESSAGE})
+        yield StreamEvent(
+            "outcome",
+            {"outcome": TurnOutcome(agent, DEGRADED_MESSAGE, True, "circuit_open", None)},
+        )
+        return
+
     pending_tool_calls: dict[str, str] = {}
 
     logger.info("Runner.run_streamed starting for session %s (agent=%s)", context.session_id, agent.name)
@@ -239,10 +268,12 @@ async def stream_turn(
         logger.info(
             "SDK stream_events() exhausted normally for session %s (%d events)", context.session_id, sdk_event_count
         )
+        record_llm_success()
 
     except InputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
         safe_message = info.get("safe_message", SAFE_BLOCKED_MESSAGE)
+        metrics.guardrail_triggers_total.labels(type="input", rule=info.get("reason", "input_blocked")).inc()
         yield StreamEvent("response_delta", {"delta": safe_message, "agent": current_agent_name})
         yield StreamEvent("response_completed", {"agent": current_agent_name, "text": safe_message})
         yield StreamEvent(
@@ -253,6 +284,7 @@ async def stream_turn(
     except OutputGuardrailTripwireTriggered as exc:
         info = exc.guardrail_result.output.output_info or {}
         reason = info.get("reason", "output_blocked")
+        metrics.guardrail_triggers_total.labels(type="output", rule=reason).inc()
 
         # Spec 9.2: the streamed content that reached the client before the
         # guardrail tripped must be retracted — emit response_retracted so the
@@ -296,6 +328,7 @@ async def stream_turn(
         # stream_message() never reaches record_turn() and the user's
         # message is silently dropped from conversation history.
         logger.exception("Unhandled error during agent turn for session %s", context.session_id)
+        record_llm_failure()
         yield StreamEvent("response_delta", {"delta": SAFE_ERROR_MESSAGE, "agent": current_agent_name})
         yield StreamEvent("response_completed", {"agent": current_agent_name, "text": SAFE_ERROR_MESSAGE})
         yield StreamEvent(
@@ -317,6 +350,7 @@ async def stream_turn(
     yield StreamEvent("response_completed", {"agent": final_agent.name, "text": final_text})
 
     if final_agent.name == "Escalation Agent":
+        metrics.escalations_total.labels(reason="agent_handoff").inc()
         yield StreamEvent("escalation", {"agent": final_agent.name})
 
     yield StreamEvent("outcome", {"outcome": TurnOutcome(final_agent, final_text, False, None, result)})

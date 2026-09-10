@@ -42,6 +42,16 @@ services:
         sync: false
       - key: SLACK_WEBHOOK_URL
         sync: false
+      # Recipient for escalation emails (spec 17.1, Phase 7). Optional —
+      # falls back to SMTP_USER if unset.
+      - key: ESCALATION_EMAIL_TO
+        sync: false
+      # Phase 6 (spec 12.1): HMAC secret signing WebSocket session tokens.
+      # REQUIRED here — APP_ENV=production above means backend/config.py's
+      # validate_required_secrets() refuses to start the app without it
+      # (spec 20.2). Generate via `openssl rand -hex 32` (min 32 chars).
+      - key: SESSION_SECRET
+        sync: false
       - key: RATE_LIMIT_PER_SESSION_PER_MINUTE
         value: "20"
       - key: RATE_LIMIT_PER_IP_PER_MINUTE

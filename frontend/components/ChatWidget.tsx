@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatSocket, type ConnectionStatus, type ServerEvent } from "@/lib/websocket";
-import { getStoredSessionId } from "@/lib/session";
+import { createSession, getStoredSessionId, getStoredToken } from "@/lib/session";
 import ChatWindow from "./ChatWindow";
 
 // Phase 12 (spec 5.1): postMessage bridge for the embedded widget variant.
@@ -166,17 +166,47 @@ export default function ChatWidget({ variant = "launcher" }: ChatWidgetProps) {
   }, []);
 
   useEffect(() => {
-    const socket = new ChatSocket(WS_URL, getStoredSessionId());
-    socketRef.current = socket;
+    let cancelled = false;
+    let socket: ChatSocket | null = null;
+    let unsubscribeEvent: (() => void) | null = null;
+    let unsubscribeStatus: (() => void) | null = null;
 
-    const unsubscribeEvent = socket.onEvent(handleEvent);
-    const unsubscribeStatus = socket.onStatusChange(setConnectionStatus);
-    socket.connect();
+    // Spec 12.1: a signed session token is required for the WebSocket
+    // upgrade once the backend has SESSION_SECRET configured. Reuse a
+    // stored session+token (resumes the same conversation across reloads,
+    // per rule #7) if present; otherwise mint a fresh one via
+    // POST /api/sessions/create before ever opening the socket.
+    async function start() {
+      let sessionId = getStoredSessionId();
+      let token = getStoredToken();
+      if (!sessionId || !token) {
+        try {
+          const created = await createSession(WS_URL);
+          sessionId = created.sessionId;
+          token = created.token;
+        } catch {
+          // Session creation failed (backend unreachable, etc.) — fall back
+          // to connecting without a token. The server only enforces the
+          // token once SESSION_SECRET is configured; otherwise this still
+          // works exactly as before this feature existed.
+        }
+      }
+      if (cancelled) return;
+
+      socket = new ChatSocket(WS_URL, sessionId, token);
+      socketRef.current = socket;
+      unsubscribeEvent = socket.onEvent(handleEvent);
+      unsubscribeStatus = socket.onStatusChange(setConnectionStatus);
+      socket.connect();
+    }
+
+    start();
 
     return () => {
-      unsubscribeEvent();
-      unsubscribeStatus();
-      socket.close();
+      cancelled = true;
+      unsubscribeEvent?.();
+      unsubscribeStatus?.();
+      socket?.close();
     };
   }, [handleEvent]);
 

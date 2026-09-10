@@ -63,12 +63,18 @@ class Message(Base):
     # Phase 17 (spec 20.3): tenant_id on every table for row-level isolation.
     tenant_id: Mapped[str] = mapped_column(String(64), default="default", index=True)
     role: Mapped[str] = mapped_column(String(16))
-    content: Mapped[str] = mapped_column(Text)
+    # Nullable so spec 16.1 retention can nullify content while keeping the
+    # row (and its metadata) for analytics — every write path still sets it.
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
     agent: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     # Mapped attribute is named metadata_ because DeclarativeBase reserves
     # `.metadata` for the schema MetaData object; the DB column is "metadata".
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    # Spec 16.1 retention: past RETENTION_MESSAGES_DAYS, content is
+    # nullified and is_deleted flips true — the row itself (and its
+    # metadata) is kept for analytics, per spec's "soft-deleted" wording.
+    is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
 
@@ -89,6 +95,13 @@ class Ticket(Base):
     status: Mapped[TicketStatus] = mapped_column(SAEnum(TicketStatus, name="ticket_status"), default=TicketStatus.OPEN)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     assigned_to: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Spec 17.1: "SENT" once at least one channel (Email/Slack) delivers
+    # successfully, "FAILED" if none do — never blocks the escalation flow,
+    # the ticket row above is created either way. None until the first
+    # notify_human_team call. backend.services.notification_reconciliation
+    # retries FAILED tickets up to notification_retry_count == 3.
+    notification_status: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    notification_retry_count: Mapped[int] = mapped_column(default=0)
 
 
 class KnowledgeDocument(Base):

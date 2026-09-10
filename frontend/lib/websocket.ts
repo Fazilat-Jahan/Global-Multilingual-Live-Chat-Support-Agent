@@ -38,6 +38,10 @@ export class ChatSocket {
   private ws: WebSocket | null = null;
   private readonly baseUrl: string;
   private sessionId: string | null;
+  // Spec 12.1: signed session token, required on every (re)connect once the
+  // backend has SESSION_SECRET configured. The same token is reused across
+  // reconnects within its 24h lifetime — this class never refreshes it.
+  private readonly token: string | null;
   private readonly eventListeners = new Set<EventListener>();
   private readonly statusListeners = new Set<StatusListener>();
   private reconnectAttempts = 0;
@@ -45,9 +49,10 @@ export class ChatSocket {
   private manuallyClosed = false;
   private pendingMessage: { messageId: string; content: string } | null = null;
 
-  constructor(baseUrl: string, sessionId: string | null) {
+  constructor(baseUrl: string, sessionId: string | null, token: string | null = null) {
     this.baseUrl = baseUrl;
     this.sessionId = sessionId;
+    this.token = token;
   }
 
   onEvent(listener: EventListener): () => void {
@@ -64,9 +69,11 @@ export class ChatSocket {
     this.manuallyClosed = false;
     this.emitStatus("connecting");
 
-    const url = this.sessionId
-      ? `${this.baseUrl}?session_id=${encodeURIComponent(this.sessionId)}`
-      : this.baseUrl;
+    const params = new URLSearchParams();
+    if (this.sessionId) params.set("session_id", this.sessionId);
+    if (this.token) params.set("token", this.token);
+    const query = params.toString();
+    const url = query ? `${this.baseUrl}?${query}` : this.baseUrl;
     this.ws = new WebSocket(url);
 
     this.ws.onopen = () => {

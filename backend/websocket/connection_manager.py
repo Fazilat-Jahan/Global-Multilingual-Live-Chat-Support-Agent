@@ -4,6 +4,7 @@ in-flight message protection. One ConnectionState per active session_id.
 """
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 
@@ -11,8 +12,13 @@ from fastapi import WebSocket
 
 from backend.websocket.events import PING
 
+logger = logging.getLogger(__name__)
+
+# Spec 12.2: server pings every 30s; client must pong within 10s; after 3
+# consecutive missed pongs, the server closes with code 1001.
 HEARTBEAT_INTERVAL_SECONDS = 30
-IDLE_TIMEOUT_SECONDS = 300
+PONG_TIMEOUT_SECONDS = 10
+MAX_MISSED_PONGS = 3
 DEDUP_WINDOW_SECONDS = 120
 
 
@@ -21,10 +27,18 @@ class ConnectionState:
     websocket: WebSocket
     session_id: str
     last_activity: float = field(default_factory=time.monotonic)
+    # Spec 12.2 pong tracking, independent of last_activity (which any
+    # inbound message — not just a pong — advances).
+    last_pong_at: float = field(default_factory=time.monotonic)
+    missed_pongs: int = 0
     _seen_message_ids: dict[str, float] = field(default_factory=dict)
 
     def touch(self) -> None:
         self.last_activity = time.monotonic()
+
+    def record_pong(self) -> None:
+        self.last_pong_at = time.monotonic()
+        self.missed_pongs = 0
 
     def is_duplicate(self, message_id: str) -> bool:
         """True (and does not record) if this exact message_id was already
@@ -61,14 +75,29 @@ manager = ConnectionManager()
 
 
 async def heartbeat_loop(state: ConnectionState) -> None:
-    """Pings the client periodically; closes the socket if it's gone idle
-    past IDLE_TIMEOUT_SECONDS (no inbound message, including pongs)."""
+    """Spec 12.2: sends a ping every 30s, waits up to 10s for the matching
+    pong (backend.websocket.handler records one via state.record_pong() on
+    every inbound `pong` message), and closes with code 1001 after 3
+    consecutive missed pongs."""
     try:
         while True:
             await asyncio.sleep(HEARTBEAT_INTERVAL_SECONDS)
-            if time.monotonic() - state.last_activity > IDLE_TIMEOUT_SECONDS:
-                await state.websocket.close(code=1000, reason="idle timeout")
-                return
+            ping_sent_at = time.monotonic()
             await state.websocket.send_json({"type": PING})
+            await asyncio.sleep(PONG_TIMEOUT_SECONDS)
+
+            if state.last_pong_at >= ping_sent_at:
+                continue  # pong arrived in time; record_pong() already reset missed_pongs
+
+            state.missed_pongs += 1
+            logger.warning(
+                "Missed pong for session %s (%d/%d consecutive)",
+                state.session_id,
+                state.missed_pongs,
+                MAX_MISSED_PONGS,
+            )
+            if state.missed_pongs >= MAX_MISSED_PONGS:
+                await state.websocket.close(code=1001, reason="heartbeat timeout")
+                return
     except Exception:
         return
