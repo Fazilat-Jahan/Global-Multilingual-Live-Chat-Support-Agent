@@ -1,0 +1,52 @@
+# Railway config-as-code for the backend API (https://docs.railway.com/reference/config-as-code).
+# Create a new Railway project, connect this GitHub repo, and Railway will
+# build and deploy the service below automatically on every push to `main`.
+#
+# Unlike Render's Blueprint format, Railway does not declare environment
+# variables in this file — they're set in the Railway dashboard (Project ->
+# Service -> Variables) or via `railway variables set`. The full list below
+# mirrors what the previous render.yaml declared; see .env.example for the
+# complete variable reference and README.md's Deployment section for where
+# each value comes from (Neon/Upstash/Qdrant Cloud/Gemini/SMTP/Slack).
+#
+# Required (deploy will crash-loop without these):
+#   GEMINI_API_KEY, DATABASE_URL, REDIS_URL, QDRANT_URL, SESSION_SECRET,
+#   ALLOWED_ORIGINS
+#   (APP_ENV=production makes backend/config.py::validate_required_secrets
+#   refuse to start without GEMINI_API_KEY and a >=32-char SESSION_SECRET —
+#   spec 20.2. Generate SESSION_SECRET via `openssl rand -hex 32`.)
+#
+# Recommended (fixed, non-secret values — set these too):
+#   GEMINI_MODEL_NAME=gemini-flash-latest
+#   GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+#   APP_ENV=production
+#   APP_HOST=0.0.0.0
+#   LOG_LEVEL=INFO
+#   RATE_LIMIT_PER_SESSION_PER_MINUTE=20
+#   RATE_LIMIT_PER_IP_PER_MINUTE=60
+#   TENANT_ID=default
+#
+# Optional (feature-gated; leave unset to disable that feature):
+#   QDRANT_API_KEY, SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD,
+#   ESCALATION_EMAIL_TO, SLACK_WEBHOOK_URL, ADMIN_API_KEY
+#
+# Railway also injects PORT automatically — startCommand below reads it via
+# $PORT, matching the Dockerfile's own CMD.
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Pre-deploy hook (spec 6.2): runs once before each deploy's start command,
+# Railway's equivalent of Render/Heroku's "release phase" and this repo's
+# own Procfile `release:` line. Same migration command the Dockerfile's CMD
+# runs locally/on Render — kept as a separate release step here so it shows
+# up as its own phase in the Railway dashboard/logs rather than being
+# folded into the start command.
+releaseCommand = "cd backend && alembic upgrade head"
+startCommand = "uvicorn backend.main:app --host 0.0.0.0 --port $PORT"
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

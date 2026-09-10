@@ -104,7 +104,7 @@ This repo is a complete, working implementation: a FastAPI backend, native multi
 | Testing | pytest + pytest-asyncio, `pytest-cov` |
 | Linting / types | Ruff (lint + format), Pyright |
 | Security scanning | `pip-audit` |
-| Deployment | Docker, Render/Railway (backend), Vercel (frontend), GitHub Actions CI |
+| Deployment | Docker, Railway (backend), Vercel (frontend), GitHub Actions CI |
 
 ## Architecture Overview
 
@@ -239,7 +239,7 @@ Global Multilingual Live Chat Support Agent/
 ├── docker-compose.yml             # Postgres + Redis + Qdrant (+ optional app service)
 ├── Dockerfile                     # Backend container image (runs Alembic, then uvicorn)
 ├── Procfile                       # release/web process types (buildpack platforms)
-├── render.yaml                    # Render Blueprint for the backend
+├── railway.toml                   # Railway config-as-code for the backend
 ├── pyproject.toml                 # Python package, dependencies, ruff/pytest/coverage config
 ├── pyrightconfig.json
 ├── .env.example
@@ -662,20 +662,20 @@ Recommended split:
 | Component | Platform |
 |---|---|
 | Frontend | Vercel |
-| Backend | Render or Railway (deploys the included `Dockerfile`) |
-| Postgres | Neon (or Supabase/Railway Postgres) |
-| Redis | Upstash |
+| Backend | Railway (deploys the included `Dockerfile`, config in `railway.toml`) |
+| Postgres | Neon (or Railway Postgres) |
+| Redis | Upstash (or Railway Redis) |
 | Qdrant | Qdrant Cloud (or a self-hosted Docker deployment) |
 
 1. Provision Neon, Upstash, and Qdrant Cloud, and get a Gemini API key from Google AI Studio.
-2. Deploy the backend from `render.yaml` (a Render Blueprint) or `Procfile` (any buildpack platform), setting every env var from `.env.example` in the platform dashboard — never commit real secrets. The `Dockerfile`'s `CMD` and the `Procfile`'s `release` phase both run `alembic upgrade head` before starting `uvicorn`.
+2. Create a new Railway project and connect this GitHub repo — Railway auto-detects `railway.toml` and builds the included `Dockerfile`. Set every env var from `.env.example` in the Railway dashboard (Project → Service → Variables) or via `railway variables set` — never commit real secrets. `railway.toml`'s `releaseCommand` runs `alembic upgrade head` as its own deploy phase before `startCommand` launches `uvicorn` (Railway's equivalent of a Render/Heroku release phase); the `Dockerfile`'s own `CMD` and the `Procfile`'s `release` phase do the same combined migrate-then-start sequence for a plain `docker run` or a buildpack-based platform.
 3. Ensure the target database already has the base schema (see [Known Issues](#known-issues--limitations)) — run `python -m backend.scripts.init_db` against it once if it's brand new, then let the deploy's `alembic upgrade head` step apply everything after the baseline.
 4. Run `python -m backend.rag.ingestion --mode full` once against the production Qdrant instance to seed the knowledge base.
 5. Deploy `frontend/` to Vercel, setting `NEXT_PUBLIC_WS_URL` to `wss://<your-backend-domain>/ws/chat` and `WIDGET_ALLOWED_EMBEDDERS` to the client site domain(s) that are allowed to embed `/widget`.
 6. On the backend, set `ALLOWED_ORIGINS` to the same client site domain(s) plus the widget host's own origin.
-7. `.github/workflows/ci.yml` runs five jobs on every push to `main`/PR — `lint`, `typecheck`, `test` (against real Postgres/Redis/Qdrant service containers), `frontend` (lint + build), and `security` (`pip-audit`). Add a `GEMINI_API_KEY` repository secret so the live-LLM tests in the `test` job run for real.
+7. `.github/workflows/ci.yml` runs five jobs on every push to `main`/PR — `lint`, `typecheck`, `test` (against real Postgres/Redis/Qdrant service containers), `frontend` (lint + build), and `security` (`pip-audit`). Add a `GEMINI_API_KEY` repository secret so the live-LLM tests in the `test` job run for real. CI is a required-checks gate on `main`, separate from Railway's own auto-deploy-on-push — configure branch protection in GitHub so a failing CI run blocks the merge that would otherwise trigger Railway's deploy.
 
-Both Render/Railway and Vercel terminate TLS automatically, so the API is reachable over HTTPS and the WebSocket endpoint over WSS.
+Both Railway and Vercel terminate TLS automatically, so the API is reachable over HTTPS and the WebSocket endpoint over WSS.
 
 ## Contributing
 

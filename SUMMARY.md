@@ -44,7 +44,7 @@ From the customer's side, it's a chat widget on a website (or embedded via an if
 | Vector database | Qdrant, per-tenant collections holding multilingual embeddings so retrieval works across languages |
 | Relational database | PostgreSQL — durable conversations, messages, tickets, and knowledge-base ingestion checksums; schema managed by Alembic migrations |
 | Cache / sessions | Redis — fast session lookups, rate-limit counters, verification state, and knowledge-base re-ingestion locks |
-| Deployment | Docker, Render/Railway (backend), Vercel (frontend), a 5-job CI pipeline (lint, typecheck, test, frontend, security) on every push |
+| Deployment | Docker, Railway (backend), Vercel (frontend), a 5-job CI pipeline (lint, typecheck, test, frontend, security) on every push |
 
 ## 4. Architecture Overview
 
@@ -96,7 +96,7 @@ The difference between this and a weekend chatbot demo is almost entirely in wha
 - **Properly sandboxed, embeddable widget** — a one-script loader drops a sandboxed iframe into any client site, restricted by a CSP `frame-ancestors` allowlist and a server-side origin policy that rejects disallowed origins for both HTTP and WebSocket traffic, not just a browser-side CORS block.
 - **Schema managed by migrations** — Alembic tracks every schema change (tenant scoping, knowledge-base checksum tracking) instead of ad-hoc table edits.
 - **Tested and evaluated** — unit, integration, routing, guardrail, multilingual, and Alembic test suites (over 170 automated tests), plus a fixed evaluation set scoring RAG groundedness and abstention, with an 80%+ coverage gate on pure-logic modules.
-- **Actually deployable** — Dockerized (migrations run before the app starts), CI-gated (lint, types, tests, frontend build, dependency vulnerability scan on every push), HTTPS/WSS end to end, with a documented path to Render/Vercel or equivalent hosts.
+- **Actually deployable** — Dockerized (migrations run before the app starts), CI-gated (lint, types, tests, frontend build, dependency vulnerability scan on every push), HTTPS/WSS end to end, with a documented path to Railway/Vercel or equivalent hosts.
 
 ## 6. Current Scope
 
